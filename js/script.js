@@ -1674,7 +1674,15 @@ window.copyAppId = function() {
     const initTestButton = () => {
         const testBtn = document.getElementById('testFillBtn');
         if (!testBtn) return;
-        
+
+        const hostname = window.location.hostname;
+        const isDev = hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.replit.dev');
+        if (!isDev) {
+            const container = document.getElementById('testButtonContainer');
+            if (container) container.style.display = 'none';
+            return;
+        }
+
         console.log('✅ Test button initialized');
         
         testBtn.addEventListener('click', function(e) {
