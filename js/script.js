@@ -122,6 +122,7 @@ class RentalApplication {
         this.setupGeoapify();
         this.setupInputFormatting();
         this.setupLanguageToggle();
+        this.setupAccessibility();
         
         const savedAppId = sessionStorage.getItem('lastSuccessAppId');
         if (savedAppId) {
@@ -356,15 +357,22 @@ class RentalApplication {
 
     showError(field, message) {
         field.classList.add('error');
+        field.setAttribute('aria-invalid', 'true');
         const errorMsg = field.closest('.form-group')?.querySelector('.error-message');
         if (errorMsg) {
+            errorMsg.id = errorMsg.id || `error-${field.id || Math.random().toString(36).substr(2, 8)}`;
+            field.setAttribute('aria-describedby', errorMsg.id);
             errorMsg.textContent = message;
             errorMsg.style.display = 'block';
+            errorMsg.setAttribute('role', 'alert');
+            errorMsg.setAttribute('aria-live', 'assertive');
         }
     }
 
     clearError(field) {
         field.classList.remove('error');
+        field.removeAttribute('aria-invalid');
+        field.removeAttribute('aria-describedby');
         const errorMsg = field.closest('.form-group')?.querySelector('.error-message');
         if (errorMsg) {
             errorMsg.style.display = 'none';
@@ -1093,6 +1101,7 @@ class RentalApplication {
 
         this.translations = translations;
         this.state.language = 'en';
+        document.documentElement.lang = this.state.language;
         const btn = document.getElementById('langToggle');
         const text = document.getElementById('langText');
         
@@ -1141,8 +1150,67 @@ class RentalApplication {
                 }
 
                 this.saveProgress();
+
+                // Set document language for assistive tech
+                document.documentElement.lang = this.state.language;
             });
         }
+    }
+
+    setupAccessibility() {
+        const root = document.documentElement;
+
+        // Restore high contrast mode choice
+        if (localStorage.getItem('highContrastMode') === 'true') {
+            root.classList.add('high-contrast');
+        }
+
+        const contrastToggle = document.getElementById('contrastToggle');
+        if (contrastToggle) {
+            contrastToggle.addEventListener('click', () => {
+                const enabled = root.classList.toggle('high-contrast');
+                localStorage.setItem('highContrastMode', enabled);
+                contrastToggle.textContent = enabled ? 'Standard Contrast' : 'High Contrast';
+            });
+        }
+
+        const form = document.getElementById('rentalApplication');
+        if (!form) return;
+
+        // Ensure every required control announces required state
+        form.querySelectorAll('[required]').forEach((el) => {
+            el.setAttribute('aria-required', 'true');
+            if (!el.id) {
+                el.id = `auto-field-${Math.random().toString(36).substr(2, 8)}`;
+            }
+            const label = form.querySelector(`label[for="${el.id}"]`);
+            if (label) {
+                el.setAttribute('aria-label', label.textContent.trim());
+            }
+        });
+
+        // Set roles and label for sections
+        document.querySelectorAll('.form-section').forEach((section, idx) => {
+            section.setAttribute('role', 'region');
+            section.setAttribute('aria-label', `Step ${idx + 1}`);
+            section.setAttribute('tabindex', '-1');
+        });
+
+        const submitBtn = document.getElementById('mainSubmitBtn');
+        if (submitBtn) {
+            submitBtn.setAttribute('aria-label', 'Submit rental application');
+        }
+
+        // Improve focus on scroll-to-invalid
+        const prevNextButtons = document.querySelectorAll('.btn-next, .btn-prev');
+        prevNextButtons.forEach(btn => {
+            btn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    btn.click();
+                }
+            });
+        });
     }
 
     // ---------- NEW: Distinguish error types ----------
@@ -1293,7 +1361,7 @@ class RentalApplication {
         }
     }
 
-    // ---------- MODIFIED: handleFormSubmit with retry reset ----------
+    // ---------- MODIFIED: handleFormSubmit with security improvements ----------
     async handleFormSubmit(e) {
         e.preventDefault();
 
@@ -1315,6 +1383,36 @@ class RentalApplication {
             return;
         }
 
+        // ────────────────────────────────────────────────────────
+        // SECURITY: Check GDPR/CCPA Consents
+        // ────────────────────────────────────────────────────────
+        const dataProcessingConsent = document.getElementById('dataProcessingConsent');
+        const backgroundCheckConsent = document.getElementById('backgroundCheckConsent');
+        
+        if (!dataProcessingConsent || !dataProcessingConsent.checked) {
+            alert('Please consent to data processing to continue. This is required.');
+            SecurityManager.logSecurityEvent('consent_missing', 'dataProcessingConsent');
+            return;
+        }
+        
+        if (!backgroundCheckConsent || !backgroundCheckConsent.checked) {
+            alert('Please authorize background and employment checks. This is required.');
+            SecurityManager.logSecurityEvent('consent_missing', 'backgroundCheckConsent');
+            return;
+        }
+
+        // Track consent given
+        const email = document.getElementById('email').value;
+        SecurityManager.trackConsent('data_processing', true);
+        SecurityManager.trackConsent('background_check', true);
+        
+        if (document.getElementById('emailMarketingConsent').checked) {
+            SecurityManager.trackConsent('email_marketing', true);
+        }
+
+        // ────────────────────────────────────────────────────────
+        // Check legal agreements
+        // ────────────────────────────────────────────────────────
         const certify = document.getElementById('certifyCorrect');
         const authorize = document.getElementById('authorizeVerify');
         const terms = document.getElementById('termsAgree');
@@ -1353,10 +1451,19 @@ class RentalApplication {
             const form = document.getElementById('rentalApplication');
             const formData = new FormData(form);
 
+            // ────────────────────────────────────────────────────────
+            // SECURITY: Add CSRF Token & Session ID
+            // ────────────────────────────────────────────────────────
+            SecurityManager.addSecurityHeaders(formData);
+            formData.set('DataProcessingConsent', 'yes');
+
             this.updateSubmissionProgress(2, t.validating);
             const response = await fetch(this.BACKEND_URL, {
                 method: 'POST',
-                body: formData
+                body: formData,
+                headers: {
+                    // Let browser set Content-Type with boundary for FormData
+                }
             });
 
             const result = await response.json();
@@ -1366,13 +1473,15 @@ class RentalApplication {
                 await this.delay(500);
                 this.updateSubmissionProgress(4, t.complete);
                 await this.delay(500);
-                this.handleSubmissionSuccess(result.appId);
+                this.handleSubmissionSuccess(result.data.appId);
+                SecurityManager.logSecurityEvent('submission_success', `App ID: ${result.data.appId}`);
             } else {
                 throw new Error(result.error || 'Submission failed');
             }
 
         } catch (error) {
             console.error('Submission error:', error);
+            SecurityManager.logSecurityEvent('submission_error', error.toString());
             const submitBtn = document.getElementById('mainSubmitBtn');
             if (submitBtn) {
                 submitBtn.classList.remove('loading');
@@ -1556,6 +1665,10 @@ class RentalApplication {
 
     clearSavedProgress() {
         localStorage.removeItem(this.config.LOCAL_STORAGE_KEY);
+        // Also clear offline manager data if available
+        if (typeof OfflineManager !== 'undefined') {
+            OfflineManager.clear();
+        }
     }
 
     generateApplicationSummary() {

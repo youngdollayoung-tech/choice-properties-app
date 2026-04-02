@@ -34,14 +34,20 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/phase2-enhancements.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="js/security.js"></script>
+    <script src="js/offline-handler.js"></script>
+    <script src="js/form-helpers.js"></script>
 </head>
 <body>
 
-<div class="modal-backdrop" id="modalBackdrop"></div>
+<a href="#rentalApplication" class="skip-link" id="skipToForm">Skip to application form</a>
+<div class="modal-backdrop" id="modalBackdrop" aria-hidden="true"></div>
 
+<main role="main" aria-label="Rental Application">
     <div class="container">
-        <header>
+        <header role="banner">
             <div class="header-left">
                 <div class="logo">
                     <div class="logo-mark">CP</div>
@@ -53,9 +59,12 @@
                     <i class="fas fa-lock"></i> CONFIDENTIAL & SECURE
                 </div>
                 <div class="language-toggle">
-                    <button type="button" id="langToggle">
+                    <button type="button" id="langToggle" aria-live="polite" aria-label="Toggle language">
                         <i class="fas fa-language"></i> <span id="langText" data-i18n="langText">Español</span>
                     </button>
+                </div>
+                <div class="contrast-toggle">
+                    <button type="button" id="contrastToggle" aria-live="polite" aria-label="Toggle high contrast mode">High Contrast</button>
                 </div>
             </div>
             <div class="header-sub">
@@ -69,7 +78,7 @@
             </div>
         </header>
 
-        <div class="progress-container" data-progress-text="Step 1 of 6: Property & Applicant">
+        <div class="progress-container" role="region" aria-label="Application progress" data-progress-text="Step 1 of 6: Property & Applicant">
             <div class="progress-bar">
                 <div class="progress-fill" id="progressFill"></div>
                 <div class="progress-step completed" id="step1">
@@ -124,8 +133,8 @@
             <span class="step-label" data-i18n="complete">Complete</span>
         </div>
     </div>
-    <div class="status-area" id="statusArea">
-        <i class="fas fa-spinner fa-pulse" id="submissionSpinner"></i>
+    <div class="status-area" id="statusArea" role="status" aria-live="polite" aria-atomic="true">
+        <i class="fas fa-spinner fa-pulse" id="submissionSpinner" aria-hidden="true"></i>
         <span id="submissionMessage">Processing your application...</span>
     </div>
     <div class="submission-note" data-i18n="submissionMessage">Please don't close this window. This may take a few moments...</div>
@@ -1005,6 +1014,46 @@
                 <div class="legal-section">
                     <h3 data-i18n="legalDeclaration">Legal Declaration</h3>
 
+                    <!-- GDPR / CCPA Consent -->
+                    <div class="legal-checkbox-group">
+                        <div class="consent-section">
+                            <div class="consent-header">
+                                <i class="fas fa-lock"></i>
+                                <h4 data-i18n="dataPrivacyTitle">Data Privacy & Consent</h4>
+                            </div>
+                            <p class="consent-description" data-i18n="dataPrivacyDesc">
+                                We collect and process your personal information to evaluate your rental application. Your data is protected and will not be shared with third parties without your consent.
+                            </p>
+                            
+                            <div class="custom-checkbox">
+                                <input type="checkbox" id="dataProcessingConsent" name="DataProcessingConsent" value="yes" required>
+                                <label for="dataProcessingConsent" data-i18n="dataProcessingConsent">
+                                    I consent to Choice Properties collecting, processing, and storing my personal information for rental application evaluation purposes. (Required)
+                                </label>
+                            </div>
+
+                            <div class="custom-checkbox">
+                                <input type="checkbox" id="emailMarketingConsent" name="EmailMarketingConsent" value="yes">
+                                <label for="emailMarketingConsent" data-i18n="emailMarketingConsent">
+                                    I consent to receiving promotional emails and updates from Choice Properties. (Optional)
+                                </label>
+                            </div>
+
+                            <div class="custom-checkbox">
+                                <input type="checkbox" id="backgroundCheckConsent" name="BackgroundCheckConsent" value="yes" required>
+                                <label for="backgroundCheckConsent" data-i18n="backgroundCheckConsent">
+                                    I authorize a background check, credit check, and employment verification as part of the application process. (Required)
+                                </label>
+                            </div>
+
+                            <p class="consent-note" data-i18n="consentNote">
+                                <i class="fas fa-info-circle"></i>
+                                You have the right to request access, correction, or deletion of your data at any time. See our <a href="#" target="_blank">Privacy Policy</a> for more details.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Original Legal Checkboxes -->
                     <div class="legal-checkbox-group">
                         <div class="custom-checkbox">
                             <input type="checkbox" id="certifyCorrect" required>
@@ -1033,9 +1082,10 @@
             </div>
         </form>
     </div>
+</main>
 
     <!-- Footer -->
-    <footer>
+    <footer role="contentinfo">
         <div class="footer-content">
             <div class="footer-logo">
                 <i class="fas fa-building"></i> <span data-i18n="logoText">Choice Properties</span>
@@ -1061,8 +1111,8 @@
         <i class="fas fa-save"></i> <span data-i18n="progressSaved">Progress Saved</span>
     </div>
 
-    <div class="offline-indicator" id="offlineIndicator">
-        <i class="fas fa-wifi-slash"></i> <span data-i18n="offlineMessage">You are currently offline. Progress will be saved locally.</span>
+    <div class="offline-indicator" id="offlineIndicator" role="alert" aria-live="assertive" aria-atomic="true">
+        <i class="fas fa-wifi-slash" aria-hidden="true"></i> <span data-i18n="offlineMessage">You are currently offline. Progress will be saved locally.</span>
     </div>
 
     <script>

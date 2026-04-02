@@ -269,12 +269,24 @@ function renderLoginPage(errorMsg) {
 }
 
 // ============================================================
-// doPost() — Handle form submissions
+// doPost() — Handle form submissions with SECURITY
 // ============================================================
 function doPost(e) {
   try {
+    const ipAddress = getClientIPAddress(e);
     let formData = {};
     let fileBlob = null;
+
+    // ────────────────────────────────────────────────────────
+    // RATE LIMITING CHECK
+    // ────────────────────────────────────────────────────────
+    const rateLimitCheck = checkRateLimit(ipAddress);
+    if (!rateLimitCheck.allowed) {
+      logSecurityEvent('rate_limit_exceeded', 'unknown', null, `IP: ${ipAddress}`, ipAddress);
+      return ContentService
+        .createTextOutput(JSON.stringify(buildErrorResponse(429, rateLimitCheck.message)))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
 
     if (e.postData && e.postData.type && e.postData.type.indexOf('multipart/form-data') === 0) {
       const boundary = e.postData.type.split('boundary=')[1];
@@ -308,51 +320,144 @@ function doPost(e) {
       formData = e.parameter;
     }
 
+    // ────────────────────────────────────────────────────────
+    // CSRF TOKEN VALIDATION
+    // ────────────────────────────────────────────────────────
+    if (formData['_action'] !== 'signLease') {
+      const sessionId = formData['_sessionId'];
+      const csrfToken = formData['_csrfToken'];
+      
+      if (!sessionId || !csrfToken) {
+        logSecurityEvent('csrf_missing', formData['Email'] || 'unknown', null, 'Missing CSRF token', ipAddress);
+        return ContentService
+          .createTextOutput(JSON.stringify(buildErrorResponse(403, 'Security token missing')))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      const csrfValidation = validateCSRFToken(sessionId, csrfToken);
+      if (!csrfValidation.valid) {
+        logSecurityEvent('csrf_invalid', formData['Email'] || 'unknown', null, csrfValidation.error, ipAddress);
+        return ContentService
+          .createTextOutput(JSON.stringify(buildErrorResponse(403, csrfValidation.error)))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+    }
+
     // ── Route: lease e-signature submission ──
     if (formData['_action'] === 'signLease') {
-      const result = signLease(formData['appId'], formData['tenantSignature'], formData['ipAddress'] || '');
+      const result = signLease(formData['appId'], formData['tenantSignature'], ipAddress);
+      logSecurityEvent('lease_signed', formData['Email'] || 'unknown', formData['appId'], 'Lease signed', ipAddress);
       return ContentService
         .createTextOutput(JSON.stringify(result))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
-    const result = processApplication(formData, fileBlob);
+    const result = processApplication(formData, fileBlob, ipAddress);
     return ContentService
       .createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
     console.error('doPost error:', error);
+    logSecurityEvent('doPost_error', 'unknown', null, error.toString(), 'unknown');
     return ContentService
-      .createTextOutput(JSON.stringify({ success: false, error: error.toString() }))
+      .createTextOutput(JSON.stringify(buildErrorResponse(500, 'Server error', error.toString())))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
 // ============================================================
-// processApplication()
+// processApplication() — WITH SECURITY VALIDATION
 // ============================================================
-function processApplication(formData, fileBlob) {
+function processApplication(formData, fileBlob, ipAddress) {
   try {
-    const requiredFields = ['First Name', 'Last Name', 'Email', 'Phone'];
-    for (let field of requiredFields) {
-      if (!formData[field] || formData[field].trim() === '') {
-        throw new Error(`Missing required field: ${field}`);
+    // ────────────────────────────────────────────────────────
+    // STEP 1: VALIDATE FORM DATA
+    // ────────────────────────────────────────────────────────
+    const validation = validateFormData(formData);
+    if (!validation.valid) {
+      logSecurityEvent('validation_failed', formData['Email'] || 'unknown', null, validation.errors.join('; '), ipAddress);
+      return buildErrorResponse(400, 'Validation failed', validation.errors);
+    }
+
+    // ────────────────────────────────────────────────────────
+    // STEP 2: VALIDATE FILE UPLOAD (if present)
+    // ────────────────────────────────────────────────────────
+    if (fileBlob) {
+      const fileValidation = validateFileUpload(fileBlob);
+      if (!fileValidation.valid) {
+        logSecurityEvent('file_upload_rejected', formData['Email'] || 'unknown', null, fileValidation.error, ipAddress);
+        return buildErrorResponse(400, fileValidation.error);
+      }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // STEP 3: SANITIZE INPUT DATA
+    // ────────────────────────────────────────────────────────
+    formData['First Name'] = sanitizeString(formData['First Name']);
+    formData['Last Name'] = sanitizeString(formData['Last Name']);
+    formData['Email'] = sanitizeEmail(formData['Email']);
+    formData['Phone'] = sanitizePhone(formData['Phone']);
+    formData['Property Address'] = sanitizeString(formData['Property Address']);
+    formData['Requested Move-in Date'] = sanitizeDate(formData['Requested Move-in Date']);
+    formData['SSN'] = sanitizeSSN(formData['SSN']);
+    
+    if (formData['Monthly Income']) {
+      formData['Monthly Income'] = sanitizeCurrency(formData['Monthly Income']);
+    }
+    
+    if (formData['Other Income']) {
+      formData['Other Income'] = sanitizeCurrency(formData['Other Income']);
+    }
+
+    // Sanitize co-applicant data if present
+    if (formData['Has Co-Applicant'] === 'Yes') {
+      if (formData['Co-Applicant First Name']) {
+        formData['Co-Applicant First Name'] = sanitizeString(formData['Co-Applicant First Name']);
+      }
+      if (formData['Co-Applicant Last Name']) {
+        formData['Co-Applicant Last Name'] = sanitizeString(formData['Co-Applicant Last Name']);
+      }
+      if (formData['Co-Applicant Email']) {
+        formData['Co-Applicant Email'] = sanitizeEmail(formData['Co-Applicant Email']);
+      }
+      if (formData['Co-Applicant Phone']) {
+        formData['Co-Applicant Phone'] = sanitizePhone(formData['Co-Applicant Phone']);
+      }
+      if (formData['Co-Applicant SSN']) {
+        formData['Co-Applicant SSN'] = sanitizeSSN(formData['Co-Applicant SSN']);
+      }
+      if (formData['Co-Applicant Monthly Income']) {
+        formData['Co-Applicant Monthly Income'] = sanitizeCurrency(formData['Co-Applicant Monthly Income']);
       }
     }
 
     const ss = getSpreadsheet();
     initializeSheets();
     const sheet = ss.getSheetByName(SHEET_NAME);
-    const col   = getColumnMap(sheet);
+    const col = getColumnMap(sheet);
     const appId = formData.appId || generateAppId();
 
+    // ────────────────────────────────────────────────────────
+    // STEP 4: HANDLE FILE UPLOAD
+    // ────────────────────────────────────────────────────────
     let fileUrl = '';
     if (fileBlob) {
       try {
         const file = DriveApp.createFile(fileBlob);
         fileUrl = file.getUrl();
-      } catch (err) { console.error('File upload error:', err); }
+        logSecurityEvent('file_uploaded', formData['Email'], appId, fileBlob.getName(), ipAddress);
+      } catch (err) {
+        console.error('File upload error:', err);
+        logSecurityEvent('file_upload_error', formData['Email'], appId, err.toString(), ipAddress);
+      }
+    }
+
+    // ────────────────────────────────────────────────────────
+    // STEP 5: TRACK GDPR CONSENT
+    // ────────────────────────────────────────────────────────
+    if (formData['DataProcessingConsent'] === 'yes') {
+      trackConsentGiven(appId, formData['Email'], 'data_processing', new Date());
     }
 
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
@@ -364,7 +469,7 @@ function processApplication(formData, fileBlob) {
         case 'Status':                rowData.push('pending'); break;
         case 'Payment Status':        rowData.push('unpaid'); break;
         case 'Payment Date':          rowData.push(''); break;
-        case 'Admin Notes':           rowData.push(''); break;
+        case 'Admin Notes':           rowData.push(`[Security: Created from IP ${ipAddress}]`); break;
         case 'Document URL':          rowData.push(fileUrl); break;
         case 'Preferred Contact Method': rowData.push(getCheckboxValues(formData, 'Preferred Contact Method')); break;
         case 'Preferred Time':        rowData.push(getCheckboxValues(formData, 'Preferred Time')); break;
@@ -399,14 +504,19 @@ function processApplication(formData, fileBlob) {
 
     sendApplicantConfirmation(formData, appId);
     sendAdminNotification(formData, appId);
+    logSecurityEvent('application_submitted', formData['Email'], appId, 'Success', ipAddress);
     logEmail('application_submitted', formData['Email'], 'success', appId);
 
-    return { success: true, appId: appId, message: 'Application submitted successfully' };
+    return buildSuccessResponse({
+      appId: appId,
+      message: 'Application submitted successfully'
+    });
 
   } catch (error) {
     console.error('processApplication error:', error);
+    logSecurityEvent('processApplication_error', formData['Email'] || 'unknown', null, error.toString(), ipAddress);
     logEmail('application_submitted', formData['Email'] || 'unknown', 'failed', null, error.toString());
-    return { success: false, error: error.toString() };
+    return buildErrorResponse(500, 'Application processing failed', error.toString());
   }
 }
 
