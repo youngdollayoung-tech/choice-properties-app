@@ -15,7 +15,7 @@ const OfflineManager = (() => {
    */
   function initializeOfflineSupport() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/js/service-worker.js')
+      navigator.serviceWorker.register('/service-worker.js')
         .then((registration) => {
           console.log('[Offline] Service Worker registered:', registration);
           setupServiceWorkerListeners(registration);
