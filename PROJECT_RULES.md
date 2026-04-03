@@ -50,6 +50,18 @@ If you are an AI assistant operating inside Replit or any similar environment:
 
 ---
 
+## ✅ ALLOWED FEATURES — POST-IMPLEMENTATION
+
+### Embeddable Widget System
+- **Purpose**: Allow landlords to embed rental application forms on their websites
+- **Implementation**: Iframe-based embed with property-specific configuration
+- **Backend**: Google Apps Script serves dynamic HTML with property data
+- **Security**: Isolated iframe, no data sharing with host site
+- **Files**: `widget-generator.html` for admin code generation, `/embed` endpoint in `code.gs`
+- **No External Dependencies**: Pure GAS/HTML/JS, no npm packages or servers
+
+---
+
 ## 📱 MOBILE-FIRST DESIGN CONTRACT
 
 ALL UI/UX decisions must be mobile-first. This means:
@@ -66,6 +78,28 @@ These rules survive:
 - GitHub push / pull
 - Cloning into any new environment
 - Importing into any Replit account
+
+---
+
+## 📚 DOCUMENTATION REQUIREMENTS
+
+### Required Files
+- `README.md` - Complete project documentation (features, setup, usage)
+- `PROJECT_RULES.md` - This file (system constraints)
+- `replit.md` - Environment-specific notes for Replit/cloud IDEs
+
+### Documentation Standards
+- Keep all docs current with implemented features
+- Include setup/deployment instructions
+- Document all major features and business logic
+- Maintain architecture diagrams if applicable
+- Update on significant feature additions
+
+### Embeddable Widget Documentation
+- Document widget generation process
+- Include embedding instructions for landlords
+- Explain property configuration and customization
+- Provide troubleshooting for common embed issues
 - Forking the repository
 
 If you are reading this after any of the above operations: the rules still apply in full.

@@ -1,4 +1,26 @@
 // ============================================================
+// PRODUCTION DEPLOYMENT CONFIGURATION
+// ============================================================
+
+// Environment settings
+const PRODUCTION_MODE = true; // Set to false for development
+const ALLOWED_ORIGINS = [
+  'https://your-cloudflare-pages-url.pages.dev', // Replace with actual URL
+  'https://choice-properties-app.yourdomain.com', // Replace with actual domain
+  'https://script.google.com' // For GAS execution
+];
+
+// CORS headers for production
+function getCorsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': ALLOWED_ORIGINS.join(','),
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token',
+    'Access-Control-Max-Age': '3600'
+  };
+}
+
+// ============================================================
 // CHOICE PROPERTIES - RENTAL APPLICATION BACKEND
 // Updated: Lease Flow System Added
 // ============================================================
@@ -12,6 +34,7 @@
 const SHEET_NAME = 'Applications';
 const SETTINGS_SHEET = 'Settings';
 const LOG_SHEET = 'EmailLogs';
+const PROPERTIES_SHEET = 'Properties';
 const ADMIN_EMAILS_RANGE = 'AdminEmails';
 
 // ============================================================
@@ -71,7 +94,7 @@ function initializeSheets() {
       'Co-Applicant DOB', 'Co-Applicant SSN', 'Co-Applicant Employer', 'Co-Applicant Job Title',
       'Co-Applicant Monthly Income', 'Co-Applicant Employment Duration', 'Co-Applicant Consent',
       'Vehicle Make', 'Vehicle Model', 'Vehicle Year', 'Vehicle License Plate',
-      'Emergency Contact Relationship', 'Preferred Contact Method', 'Preferred Time', 'Preferred Time Specific',
+      'Emergency Contact Relationship', 'Preferred Contact Method', 'Preferred Time', 'Preferred Time Specific', 'Preferred Language',
       // ── NEW: Lease columns ────────────────────────────────
       'Lease Status', 'Lease Sent Date', 'Lease Signed Date',
       'Lease Start Date', 'Lease End Date', 'Monthly Rent',
@@ -105,6 +128,26 @@ function initializeSheets() {
     logSheet.getRange(1, 1, 1, 6).setValues([[
       'Timestamp', 'Type', 'Recipient', 'Status', 'App ID', 'Error'
     ]]).setFontWeight('bold').setBackground('#1a5276').setFontColor('#ffffff');
+  }
+
+  // Properties sheet for embeddable widget
+  let propertiesSheet = ss.getSheetByName(PROPERTIES_SHEET);
+  if (!propertiesSheet) {
+    propertiesSheet = ss.insertSheet(PROPERTIES_SHEET);
+    const propertyHeaders = [
+      'PropertyID', 'State', 'Address', 'City', 'Zip', 'Rent', 'Deposit', 'Fees',
+      'LeaseTemplateURL', 'OwnerEmail', 'CustomCSS', 'PetPolicy', 'SmokingPolicy',
+      'UtilitiesIncluded', 'ParkingFee', 'ApplicationFee'
+    ];
+    propertiesSheet.getRange(1, 1, 1, propertyHeaders.length).setValues([propertyHeaders]);
+    propertiesSheet.getRange(1, 1, 1, propertyHeaders.length).setFontWeight('bold').setBackground('#1a5276').setFontColor('#ffffff');
+    propertiesSheet.setFrozenRows(1);
+    // Add sample property
+    propertiesSheet.getRange(2, 1, 1, propertyHeaders.length).setValues([[
+      'PROP001', 'CA', '123 Main St', 'Los Angeles', '90001', 1200, 2400, 50,
+      'https://example.com/lease-template.pdf', 'landlord@example.com', '', 'Pets Allowed', 'No Smoking',
+      'Water, Trash', 100, 25
+    ]]);
   }
 }
 
@@ -339,7 +382,8 @@ function doPost(e) {
         logSecurityEvent('csrf_invalid', formData['Email'] || 'unknown', null, csrfValidation.error, ipAddress);
         return ContentService
           .createTextOutput(JSON.stringify(buildErrorResponse(403, csrfValidation.error)))
-          .setMimeType(ContentService.MimeType.JSON);
+          .setMimeType(ContentService.MimeType.JSON)
+          .setHeaders(getCorsHeaders());
       }
     }
 
@@ -349,20 +393,173 @@ function doPost(e) {
       logSecurityEvent('lease_signed', formData['Email'] || 'unknown', formData['appId'], 'Lease signed', ipAddress);
       return ContentService
         .createTextOutput(JSON.stringify(result))
-        .setMimeType(ContentService.MimeType.JSON);
+        .setMimeType(ContentService.MimeType.JSON)
+        .setHeaders(getCorsHeaders());
     }
 
     const result = processApplication(formData, fileBlob, ipAddress);
     return ContentService
       .createTextOutput(JSON.stringify(result))
-      .setMimeType(ContentService.MimeType.JSON);
+      .setMimeType(ContentService.MimeType.JSON)
+      .setHeaders(getCorsHeaders());
 
   } catch (error) {
     console.error('doPost error:', error);
     logSecurityEvent('doPost_error', 'unknown', null, error.toString(), 'unknown');
     return ContentService
       .createTextOutput(JSON.stringify(buildErrorResponse(500, 'Server error', error.toString())))
-      .setMimeType(ContentService.MimeType.JSON);
+      .setMimeType(ContentService.MimeType.JSON)
+      .setHeaders(getCorsHeaders());
+  }
+}
+
+// ============================================================
+// doOptions() — Handle CORS preflight requests
+// ============================================================
+function doOptions(e) {
+  return ContentService
+    .createTextOutput('')
+    .setMimeType(ContentService.MimeType.TEXT)
+    .setHeaders(getCorsHeaders());
+}
+
+// ============================================================
+// doGet() — Handle embed requests
+// ============================================================
+function doGet(e) {
+  try {
+    const params = e.parameter || {};
+    const path = params.path || '';
+
+    if (path === 'embed') {
+      return serveEmbedForm(params);
+    }
+
+    // Default: serve main form
+    return HtmlService.createHtmlOutputFromFile('index')
+      .setTitle('Choice Properties Rental Application')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  } catch (error) {
+    console.error('doGet error:', error);
+    return ContentService
+      .createTextOutput('Error loading page')
+      .setMimeType(ContentService.MimeType.TEXT);
+  }
+}
+
+// ============================================================
+// serveEmbedForm() — Generate embeddable form HTML
+// ============================================================
+function serveEmbedForm(params) {
+  try {
+    const propertyId = params.propertyId || '';
+    let propertyData = {};
+
+    if (propertyId) {
+      const ss = getSpreadsheet();
+      const propertiesSheet = ss.getSheetByName(PROPERTIES_SHEET);
+      if (propertiesSheet) {
+        const data = propertiesSheet.getDataRange().getValues();
+        const headers = data[0];
+        for (let i = 1; i < data.length; i++) {
+          if (data[i][0] === propertyId) {
+            headers.forEach((header, idx) => {
+              propertyData[header] = data[i][idx];
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // Load main form HTML
+    const template = HtmlService.createTemplateFromFile('index');
+    template.propertyData = propertyData;
+    template.isEmbed = true;
+
+    return template.evaluate()
+      .setTitle('Apply for ' + (propertyData.Address || 'Property'))
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  } catch (error) {
+    console.error('serveEmbedForm error:', error);
+    return ContentService
+      .createTextOutput('Error loading embed form')
+      .setMimeType(ContentService.MimeType.TEXT);
+  }
+}
+
+// ============================================================
+// PROPERTY MANAGEMENT FUNCTIONS
+// ============================================================
+
+function getAllProperties() {
+  try {
+    const ss = getSpreadsheet();
+    const sheet = ss.getSheetByName(PROPERTIES_SHEET);
+    if (!sheet) return { success: false, error: 'Properties sheet not found' };
+
+    const data = sheet.getDataRange().getValues();
+    if (data.length <= 1) return { success: true, properties: [] };
+
+    const headers = data[0];
+    const properties = [];
+
+    for (let i = 1; i < data.length; i++) {
+      const property = {};
+      headers.forEach((header, idx) => {
+        property[header] = data[i][idx];
+      });
+      properties.push(property);
+    }
+
+    return { success: true, properties: properties };
+  } catch (error) {
+    return { success: false, error: error.toString() };
+  }
+}
+
+function addProperty(propertyData) {
+  try {
+    const ss = getSpreadsheet();
+    let sheet = ss.getSheetByName(PROPERTIES_SHEET);
+    if (!sheet) {
+      initializeSheets();
+      sheet = ss.getSheetByName(PROPERTIES_SHEET);
+    }
+
+    // Check if property ID already exists
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === propertyData.PropertyID) {
+        return { success: false, error: 'Property ID already exists' };
+      }
+    }
+
+    // Add new property
+    const newRow = [
+      propertyData.PropertyID,
+      propertyData.State,
+      propertyData.Address,
+      propertyData.City,
+      propertyData.Zip,
+      propertyData.Rent,
+      propertyData.Deposit,
+      propertyData.ApplicationFee || 25,
+      '', // LeaseTemplateURL
+      '', // OwnerEmail
+      '', // CustomCSS
+      'Pets Allowed', // PetPolicy
+      'No Smoking', // SmokingPolicy
+      'Water, Trash', // UtilitiesIncluded
+      propertyData.ParkingFee || 0,
+      propertyData.ApplicationFee || 25
+    ];
+
+    sheet.appendRow(newRow);
+    return { success: true, message: 'Property added successfully' };
+  } catch (error) {
+    return { success: false, error: error.toString() };
   }
 }
 
@@ -408,6 +605,14 @@ function processApplication(formData, fileBlob, ipAddress) {
     
     if (formData['Other Income']) {
       formData['Other Income'] = sanitizeCurrency(formData['Other Income']);
+    }
+
+    formData['Preferred Language'] = (formData['Preferred Language'] || 'en').toLowerCase();
+    if (formData['Preferred Language'] !== 'es') formData['Preferred Language'] = 'en';
+
+    // Sanitize PropertyID if present
+    if (formData['PropertyID']) {
+      formData['PropertyID'] = sanitizeString(formData['PropertyID']);
     }
 
     // Sanitize co-applicant data if present
@@ -1634,9 +1839,11 @@ function buildEmailHeader(title, appId) {
 const EmailTemplates = {
 
   // ── 1. Applicant Confirmation ─────────────────────────────
-  applicantConfirmation: (data, appId, dashboardLink, paymentMethods) => `
+  applicantConfirmation: (data, appId, dashboardLink, paymentMethods, language = 'en') => {
+    const isEs = String(language).toLowerCase() === 'es';
+    return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1654,17 +1861,15 @@ const EmailTemplates = {
 
   <div class="email-body">
 
-    <p class="greeting">Dear ${data['First Name']},</p>
+    <p class="greeting">${isEs ? `Estimado ${data['First Name']},` : `Dear ${data['First Name']},`}</p>
 
     <p class="intro-text">
-      Thank you for choosing Choice Properties. We have successfully received your rental application and
-      your file is now in our system. This confirmation serves as your official acknowledgment that your
-      submission has been recorded.
+      ${isEs ? `Gracias por elegir Choice Properties. Hemos recibido su solicitud de alquiler con éxito y su expediente ya está en nuestro sistema. Esta confirmación sirve como reconocimiento oficial de que su envío ha sido registrado.` : `Thank you for choosing Choice Properties. We have successfully received your rental application and your file is now in our system. This confirmation serves as your official acknowledgment that your submission has been recorded.`}
     </p>
 
     <!-- Application Summary -->
     <div class="section">
-      <div class="section-label">Application Summary</div>
+      <div class="section-label">${isEs ? 'Resumen de la Solicitud' : 'Application Summary'}</div>
       <table class="info-table">
         <tr><td>Application ID</td><td><strong>${appId}</strong></td></tr>
         <tr><td>Applicant Name</td><td>${data['First Name']} ${data['Last Name']}</td></tr>
@@ -1723,87 +1928,89 @@ const EmailTemplates = {
 </div>
 </body>
 </html>
-`,
+`;
+  },
 
   // ── 2. Admin Notification ─────────────────────────────────
-  adminNotification: (data, appId, baseUrl, dashboardLink, paymentMethods) => `
+  adminNotification: (data, appId, baseUrl, dashboardLink, paymentMethods, language = 'en') => {
+    const isEs = String(language).toLowerCase() === 'es';
+    return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>New Application — ${appId}</title>
+  <title>${isEs ? 'Nueva Solicitud' : 'New Application'} — ${appId}</title>
   <style>${EMAIL_BASE_CSS}</style>
 </head>
 <body>
 <div class="email-wrapper">
 
-  ${buildEmailHeader('New Application Received', appId)}
+  ${buildEmailHeader(isEs ? 'Nueva Solicitud Recibida' : 'New Application Received', appId)}
 
   <div class="status-line status-pending">
-    ⚡ &nbsp; Action Required — Application Fee Pending Collection
+    ⚡ &nbsp; ${isEs ? 'Acción Requerida — Tarifa de Solicitud Pendiente de Colección' : 'Action Required — Application Fee Pending Collection'}
   </div>
 
   <div class="email-body">
 
-    <p class="greeting">New Application Alert,</p>
+    <p class="greeting">${isEs ? 'Alerta de Nueva Solicitud,' : 'New Application Alert,'}</p>
 
     <p class="intro-text">
-      A new rental application has been submitted and requires your attention. The applicant is awaiting contact
-      to arrange payment of the $50.00 application fee. Please reach out within 24 hours.
+      ${isEs ? `Se ha enviado una nueva solicitud de alquiler que requiere tu atención. El solicitante está esperando contacto para coordinar el pago de la tarifa de solicitud de $50.00. Por favor, comunícate dentro de 24 horas.` : `A new rental application has been submitted and requires your attention. The applicant is awaiting contact to arrange payment of the $50.00 application fee. Please reach out within 24 hours.`}
     </p>
 
     <!-- Applicant at a Glance -->
     <div class="section">
-      <div class="section-label">Applicant Overview</div>
+      <div class="section-label">${isEs ? 'Vista General del Solicitante' : 'Applicant Overview'}</div>
       <table class="info-table">
-        <tr><td>Full Name</td><td><strong>${data['First Name']} ${data['Last Name']}</strong></td></tr>
-        <tr><td>Email</td><td>${data['Email']}</td></tr>
-        <tr><td>Phone</td><td><strong>${data['Phone']}</strong> (Text preferred)</td></tr>
-        <tr><td>Property Requested</td><td>${data['Property Address'] || 'Not specified'}</td></tr>
-        <tr><td>Requested Move-In</td><td>${data['Requested Move-in Date'] || 'Not specified'}</td></tr>
-        <tr><td>Lease Term</td><td>${data['Desired Lease Term'] || 'Not specified'}</td></tr>
-        <tr><td>Contact Preference</td><td>${data['Preferred Contact Method'] || 'Not specified'}</td></tr>
-        <tr><td>Best Times to Reach</td><td>${data['Preferred Time'] || 'Any'} ${data['Preferred Time Specific'] ? '— ' + data['Preferred Time Specific'] : ''}</td></tr>
+        <tr><td>${isEs ? 'Nombre Completo' : 'Full Name'}</td><td><strong>${data['First Name']} ${data['Last Name']}</strong></td></tr>
+        <tr><td>${isEs ? 'Correo Electrónico' : 'Email'}</td><td>${data['Email']}</td></tr>
+        <tr><td>${isEs ? 'Teléfono' : 'Phone'}</td><td><strong>${data['Phone']}</strong> (${isEs ? 'SMS preferido' : 'Text preferred'})</td></tr>
+        <tr><td>${isEs ? 'Propiedad Solicitada' : 'Property Requested'}</td><td>${data['Property Address'] || (isEs ? 'No especificado' : 'Not specified')}</td></tr>
+        <tr><td>${isEs ? 'Fecha de Mudanza Solicitada' : 'Requested Move-In'}</td><td>${data['Requested Move-in Date'] || (isEs ? 'No especificado' : 'Not specified')}</td></tr>
+        <tr><td>${isEs ? 'Plazo del Arrendamiento' : 'Lease Term'}</td><td>${data['Desired Lease Term'] || (isEs ? 'No especificado' : 'Not specified')}</td></tr>
+        <tr><td>${isEs ? 'Preferencia de Contacto' : 'Contact Preference'}</td><td>${data['Preferred Contact Method'] || (isEs ? 'No especificado' : 'Not specified')}</td></tr>
+        <tr><td>${isEs ? 'Mejores Horarios para Alcanzar' : 'Best Times to Reach'}</td><td>${data['Preferred Time'] || (isEs ? 'Cualquiera' : 'Any')} ${data['Preferred Time Specific'] ? '— ' + data['Preferred Time Specific'] : ''}</td></tr>
       </table>
     </div>
 
     <!-- Payment Preferences -->
     <div class="section">
-      <div class="section-label">Payment Preferences</div>
+      <div class="section-label">${isEs ? 'Preferencias de Pago' : 'Payment Preferences'}</div>
       <div class="callout amber">
-        <h4>Contact Applicant to Collect $50.00 Fee</h4>
-        <p style="margin-bottom:12px;">The applicant has indicated the following preferred payment methods:</p>
+        <h4>${isEs ? 'Contacta al Solicitante para Colectar Tarifa de $50.00' : 'Contact Applicant to Collect $50.00 Fee'}</h4>
+        <p style="margin-bottom:12px;">${isEs ? 'El solicitante ha indicado los siguientes métodos de pago preferidos:' : 'The applicant has indicated the following preferred payment methods:'}</p>
         <div>${paymentMethods.map(m => `<span class="pay-pill">${m}</span>`).join('')}</div>
       </div>
     </div>
 
     <!-- Employment & Income -->
     <div class="section">
-      <div class="section-label">Employment & Income</div>
+      <div class="section-label">${isEs ? 'Empleo e Ingresos' : 'Employment & Income'}</div>
       <table class="info-table">
-        <tr><td>Employment Status</td><td>${data['Employment Status'] || 'Not specified'}</td></tr>
-        <tr><td>Employer</td><td>${data['Employer'] || 'N/A'}</td></tr>
-        <tr><td>Job Title</td><td>${data['Job Title'] || 'N/A'}</td></tr>
-        <tr><td>Monthly Income</td><td>${data['Monthly Income'] ? '$' + parseFloat(data['Monthly Income']).toLocaleString() : 'Not specified'}</td></tr>
-        <tr><td>Employment Duration</td><td>${data['Employment Duration'] || 'N/A'}</td></tr>
+        <tr><td>${isEs ? 'Estado de Empleo' : 'Employment Status'}</td><td>${data['Employment Status'] || (isEs ? 'No especificado' : 'Not specified')}</td></tr>
+        <tr><td>${isEs ? 'Empleador' : 'Employer'}</td><td>${data['Employer'] || 'N/A'}</td></tr>
+        <tr><td>${isEs ? 'Título de Trabajo' : 'Job Title'}</td><td>${data['Job Title'] || 'N/A'}</td></tr>
+        <tr><td>${isEs ? 'Ingreso Mensual' : 'Monthly Income'}</td><td>${data['Monthly Income'] ? '$' + parseFloat(data['Monthly Income']).toLocaleString() : (isEs ? 'No especificado' : 'Not specified')}</td></tr>
+        <tr><td>${isEs ? 'Duración del Empleo' : 'Employment Duration'}</td><td>${data['Employment Duration'] || 'N/A'}</td></tr>
       </table>
     </div>
 
     <!-- Quick Actions -->
     <div class="section">
-      <div class="section-label">Quick Actions</div>
+      <div class="section-label">${isEs ? 'Acciones Rápidas' : 'Quick Actions'}</div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
-        <a href="${baseUrl}?path=admin" style="display:inline-block;background:#0a1628;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">Admin Dashboard</a>
-        <a href="${dashboardLink}" target="_blank" style="display:inline-block;background:#1d4ed8;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">View Application</a>
-        <a href="sms:7077063137?body=Hi%20${data['First Name']}%2C%20this%20is%20Choice%20Properties%20regarding%20your%20application%20${appId}" style="display:inline-block;background:#059669;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">Text Applicant</a>
-        <a href="mailto:${data['Email']}?subject=Your%20Application%20${appId}%20-%20Choice%20Properties" style="display:inline-block;background:#64748b;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">Email Applicant</a>
+        <a href="${baseUrl}?path=admin" style="display:inline-block;background:#0a1628;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Panel de Admin' : 'Admin Dashboard'}</a>
+        <a href="${dashboardLink}" target="_blank" style="display:inline-block;background:#1d4ed8;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Ver Solicitud' : 'View Application'}</a>
+        <a href="sms:7077063137?body=Hola%20${data['First Name']}%2C%20esto%20es%20Choice%20Properties%20respecto%20a%20tu%20solicitud%20${appId}" style="display:inline-block;background:#059669;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Enviar SMS' : 'Text Applicant'}</a>
+        <a href="mailto:${data['Email']}?subject=Tu%20Solicitud%20${appId}%20-%20Choice%20Properties" style="display:inline-block;background:#64748b;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Enviar Correo' : 'Email Applicant'}</a>
       </div>
     </div>
 
     <div class="email-closing">
-      <div class="sign-off">Choice Properties System</div>
-      <div class="sign-company">Automated Admin Notification — ${appId}</div>
+      <div class="sign-off">${isEs ? 'Sistema de Choice Properties' : 'Choice Properties System'}</div>
+      <div class="sign-company">${isEs ? 'Notificación Automática de Admin' : 'Automated Admin Notification'} — ${appId}</div>
     </div>
 
   </div>
@@ -1811,77 +2018,78 @@ const EmailTemplates = {
 </div>
 </body>
 </html>
-`,
+`;
+  },
 
   // ── 3. Payment Confirmation ───────────────────────────────
-  paymentConfirmation: (appId, applicantName, phone, dashboardLink) => `
+  paymentConfirmation: (appId, applicantName, phone, dashboardLink, language = 'en') => {
+    const isEs = String(language).toLowerCase() === 'es';
+    return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Payment Confirmed — Choice Properties</title>
+  <title>${isEs ? 'Pago Confirmado' : 'Payment Confirmed'} — Choice Properties</title>
   <style>${EMAIL_BASE_CSS}</style>
 </head>
 <body>
 <div class="email-wrapper">
 
-  ${buildEmailHeader('Application Fee Confirmed', appId)}
+  ${buildEmailHeader(isEs ? 'Tarifa de Solicitud Confirmada' : 'Application Fee Confirmed', appId)}
 
   <div class="status-line status-paid">
-    ✓ &nbsp; Payment Received — Application Now Under Review
+    ✓ &nbsp; ${isEs ? 'Pago Recibido — Solicitud Bajo Revisión' : 'Payment Received — Application Now Under Review'}
   </div>
 
   <div class="email-body">
 
-    <p class="greeting">Dear ${applicantName.split(' ')[0]},</p>
+    <p class="greeting">${isEs ? `Estimado ${applicantName.split(' ')[0]},` : `Dear ${applicantName.split(' ')[0]},`}</p>
 
     <p class="intro-text">
-      We are pleased to confirm that your $50.00 application fee has been received and successfully recorded.
-      Your application is now active and has been placed in our review queue. Thank you for completing
-      this step promptly.
+      ${isEs ? `Nos complace confirmar que su tarifa de solicitud de $50.00 ha sido recibida y registrada exitosamente. Su solicitud está ahora activa y ha sido colocada en nuestra cola de revisión. Gracias por completar este paso prontamente.` : `We are pleased to confirm that your $50.00 application fee has been received and successfully recorded. Your application is now active and has been placed in our review queue. Thank you for completing this step promptly.`}
     </p>
 
     <!-- Payment Record -->
     <div class="section">
-      <div class="section-label">Payment Confirmation</div>
+      <div class="section-label">${isEs ? 'Confirmación de Pago' : 'Payment Confirmation'}</div>
       <div class="callout green">
-        <h4>✓ Payment Successfully Received</h4>
-        <div class="financial-row"><span class="f-label">Application ID</span><span class="f-value">${appId}</span></div>
-        <div class="financial-row"><span class="f-label">Applicant</span><span class="f-value">${applicantName}</span></div>
-        <div class="financial-row"><span class="f-label">Amount Paid</span><span class="f-value">$50.00</span></div>
-        <div class="financial-row"><span class="f-label">Payment Date</span><span class="f-value">${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span></div>
-        <div class="financial-row"><span class="f-label">Status</span><span class="f-value" style="color:#059669;">Under Review</span></div>
+        <h4>✓ ${isEs ? 'Pago Recibido Exitosamente' : 'Payment Successfully Received'}</h4>
+        <div class="financial-row"><span class="f-label">${isEs ? 'ID de Solicitud' : 'Application ID'}</span><span class="f-value">${appId}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Solicitante' : 'Applicant'}</span><span class="f-value">${applicantName}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Cantidad Pagada' : 'Amount Paid'}</span><span class="f-value">$50.00</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Fecha de Pago' : 'Payment Date'}</span><span class="f-value">${new Date().toLocaleDateString(isEs ? 'es-ES' : 'en-US', {weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Estado' : 'Status'}</span><span class="f-value" style="color:#059669;">${isEs ? 'Bajo Revisión' : 'Under Review'}</span></div>
       </div>
     </div>
 
     <!-- What Happens Next -->
     <div class="section">
-      <div class="section-label">What Happens Next</div>
+      <div class="section-label">${isEs ? 'Qué Pasará Después' : 'What Happens Next'}</div>
       <ul class="steps-list">
-        <li><span class="step-num">1</span><span><strong>Active Review</strong> — Your complete application is now being reviewed by our leasing team. This process is thorough and designed to be completed within 2–3 business days.</span></li>
-        <li><span class="step-num">2</span><span><strong>Background & Income Verification</strong> — We will conduct standard verification procedures as part of our review process.</span></li>
-        <li><span class="step-num">3</span><span><strong>Decision Notification</strong> — You will receive an email notification once a decision has been made. Our team may also reach out via text at <strong>${phone}</strong> if additional information is needed.</span></li>
+        <li><span class="step-num">1</span><span><strong>${isEs ? 'Revisión Activa' : 'Active Review'}</strong> — ${isEs ? 'Su solicitud completa ahora está siendo revisada por nuestro equipo de arrendamiento. Este proceso es exhaustivo y está diseñado para completarse en 2-3 días hábiles.' : 'Your complete application is now being reviewed by our leasing team. This process is thorough and designed to be completed within 2–3 business days.'}</span></li>
+        <li><span class="step-num">2</span><span><strong>${isEs ? 'Verificación de Antecedentes e Ingresos' : 'Background & Income Verification'}</strong> — ${isEs ? 'Realizaremos procedimientos de verificación estándar como parte de nuestro proceso de revisión.' : 'We will conduct standard verification procedures as part of our review process.'}</span></li>
+        <li><span class="step-num">3</span><span><strong>${isEs ? 'Notificación de Decisión' : 'Decision Notification'}</strong> — ${isEs ? `Recibirá una notificación por correo electrónico una vez que se haya tomado una decisión. Nuestro equipo también puede comunicarse por texto a <strong>${phone}</strong> si se necesita información adicional.` : `You will receive an email notification once a decision has been made. Our team may also reach out via text at <strong>${phone}</strong> if additional information is needed.`}</span></li>
       </ul>
     </div>
 
     <div class="callout">
-      <h4>A Note on Our Review Process</h4>
-      <p>We conduct every review with care and fairness. Our decisions are based on a holistic review of your application. If we require any additional documentation, we will contact you directly. There is nothing further required from you at this time.</p>
+      <h4>${isEs ? 'Una Nota Sobre Nuestro Proceso de Revisión' : 'A Note on Our Review Process'}</h4>
+      <p>${isEs ? 'Realizamos cada revisión con cuidado y equidad. Nuestras decisiones se basan en una revisión holística de su solicitud. Si requerimos documentación adicional, nos pondremos en contacto directo. No hay nada más requerido de su parte por el momento.' : 'We conduct every review with care and fairness. Our decisions are based on a holistic review of your application. If we require any additional documentation, we will contact you directly. There is nothing further required from you at this time.'}</p>
     </div>
 
     <div class="cta-wrap">
-      <a href="${dashboardLink}" class="cta-btn">Track My Application</a>
-      <div class="cta-note">Monitor your real-time status at any time</div>
+      <a href="${dashboardLink}" class="cta-btn">${isEs ? 'Seguir Mi Solicitud' : 'Track My Application'}</a>
+      <div class="cta-note">${isEs ? 'Monitoree su estado en tiempo real en cualquier momento' : 'Monitor your real-time status at any time'}</div>
     </div>
 
     <div class="contact-row">
-      <strong>Questions?</strong> &nbsp; Text: 707-706-3137 &nbsp;&middot;&nbsp; choicepropertygroup@hotmail.com
+      <strong>${isEs ? '¿Preguntas?' : 'Questions?'}</strong> &nbsp; ${isEs ? 'Envíe un texto a:' : 'Text:'} 707-706-3137 &nbsp;&middot;&nbsp; choicepropertygroup@hotmail.com
     </div>
 
     <div class="email-closing">
-      <p class="closing-text">We appreciate your patience as we complete our review. Should you have any questions in the interim, please do not hesitate to contact our leasing team.</p>
-      <div class="sign-off">Choice Properties Leasing Team</div>
+      <p class="closing-text">${isEs ? 'Apreciamos su paciencia mientras completamos nuestra revisión. Si tiene alguna pregunta mientras tanto, no dude en comunicarse con nuestro equipo de arrendamiento.' : 'We appreciate your patience as we complete our review. Should you have any questions in the interim, please do not hesitate to contact our leasing team.'}</p>
+      <div class="sign-off">${isEs ? 'Equipo de Arrendamiento de Choice Properties' : 'Choice Properties Leasing Team'}</div>
       <div class="sign-company">choicepropertygroup@hotmail.com</div>
     </div>
 
@@ -1890,14 +2098,16 @@ const EmailTemplates = {
 </div>
 </body>
 </html>
-`,
+`;
+  },
 
   // ── 4. Status Update (Approved & Denied) ──────────────────
-  statusUpdate: (appId, firstName, status, reason, dashboardLink) => {
+  statusUpdate: (appId, firstName, status, reason, dashboardLink, language = 'en') => {
     const isApproved = status === 'approved';
+    const isEs = String(language).toLowerCase() === 'es';
     return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1907,15 +2117,15 @@ const EmailTemplates = {
 <body>
 <div class="email-wrapper">
 
-  ${buildEmailHeader(isApproved ? 'Application Approved' : 'Application Update', appId)}
+  ${buildEmailHeader(isApproved ? (isEs ? 'Solicitud Aprobada' : 'Application Approved') : (isEs ? 'Actualización de Solicitud' : 'Application Update'), appId)}
 
   <div class="status-line ${isApproved ? 'status-approved' : 'status-denied'}">
-    ${isApproved ? '✓ &nbsp; Congratulations — Your Application Has Been Approved' : '— &nbsp; Your Application Has Been Reviewed'}
+    ${isApproved ? (isEs ? '✓ &nbsp; Felicitaciones — Su solicitud ha sido aprobada' : '✓ &nbsp; Congratulations — Your Application Has Been Approved') : (isEs ? '— &nbsp; Su solicitud ha sido revisada' : '— &nbsp; Your Application Has Been Reviewed')}
   </div>
 
   <div class="email-body">
 
-    <p class="greeting">Dear ${firstName},</p>
+    <p class="greeting">${isEs ? `Estimado ${firstName},` : `Dear ${firstName},`}</p>
 
     ${isApproved ? `
     <p class="intro-text">
@@ -1993,84 +2203,84 @@ const EmailTemplates = {
   },
 
   // ── 5. Lease Sent ─────────────────────────────────────────
-  leaseSent: (appId, tenantName, leaseLink, leaseData) => `
+  leaseSent: (appId, tenantName, leaseLink, leaseData, language = 'en') => {
+    const isEs = String(language).toLowerCase() === 'es';
+    return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Your Lease Agreement is Ready — Choice Properties</title>
+  <title>${isEs ? 'Tu Acuerdo de Arrendamiento Está Listo' : 'Your Lease Agreement is Ready'} — Choice Properties</title>
   <style>${EMAIL_BASE_CSS}</style>
 </head>
 <body>
 <div class="email-wrapper">
 
-  ${buildEmailHeader('Your Lease Agreement is Ready', appId)}
+  ${buildEmailHeader(isEs ? 'Tu Acuerdo de Arrendamiento Está Listo' : 'Your Lease Agreement is Ready', appId)}
 
   <div class="status-line status-lease">
-    📋 &nbsp; Action Required — Please Review and Sign Within 48 Hours
+    📋 &nbsp; ${isEs ? 'Acción Requerida — Por Favor Revisa y Firma en 48 Horas' : 'Action Required — Please Review and Sign Within 48 Hours'}
   </div>
 
   <div class="email-body">
 
-    <p class="greeting">Dear ${tenantName.split(' ')[0]},</p>
+    <p class="greeting">${isEs ? `Estimado ${tenantName.split(' ')[0]},` : `Dear ${tenantName.split(' ')[0]},`}</p>
 
     <p class="intro-text">
-      We are pleased to inform you that your lease agreement has been prepared and is now ready
-      for your review and electronic signature. Please read the agreement carefully in its entirety
-      before signing. Your signature constitutes a legally binding commitment.
+      ${isEs ? `Nos complace informarle que su acuerdo de arrendamiento ha sido preparado y está listo para su revisión y firma electrónica. Por favor, lea el acuerdo completamente y cuidadosamente antes de firmar. Su firma constituye un compromiso legalmente vinculante.` : `We are pleased to inform you that your lease agreement has been prepared and is now ready for your review and electronic signature. Please read the agreement carefully in its entirety before signing. Your signature constitutes a legally binding commitment.`}
     </p>
 
     <!-- Lease Summary -->
     <div class="section">
-      <div class="section-label">Lease Summary</div>
+      <div class="section-label">${isEs ? 'Resumen del Arrendamiento' : 'Lease Summary'}</div>
       <table class="info-table">
-        <tr><td>Property</td><td><strong>${leaseData.property}</strong></td></tr>
-        <tr><td>Lease Term</td><td>${leaseData.term}</td></tr>
-        <tr><td>Lease Start Date</td><td>${leaseData.startDate}</td></tr>
-        <tr><td>Lease End Date</td><td>${leaseData.endDate}</td></tr>
+        <tr><td>${isEs ? 'Propiedad' : 'Property'}</td><td><strong>${leaseData.property}</strong></td></tr>
+        <tr><td>${isEs ? 'Plazo del Arrendamiento' : 'Lease Term'}</td><td>${leaseData.term}</td></tr>
+        <tr><td>${isEs ? 'Fecha de Inicio' : 'Lease Start Date'}</td><td>${leaseData.startDate}</td></tr>
+        <tr><td>${isEs ? 'Fecha de Finalización' : 'Lease End Date'}</td><td>${leaseData.endDate}</td></tr>
       </table>
     </div>
 
     <!-- Financial Summary -->
     <div class="section">
-      <div class="section-label">Financial Summary</div>
+      <div class="section-label">${isEs ? 'Resumen Financiero' : 'Financial Summary'}</div>
       <div class="callout">
-        <h4>Move-In Financial Breakdown</h4>
-        <div class="financial-row"><span class="f-label">Monthly Rent</span><span class="f-value">$${parseFloat(leaseData.rent).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
-        <div class="financial-row"><span class="f-label">Security Deposit</span><span class="f-value">$${parseFloat(leaseData.deposit).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
-        <div class="financial-row total"><span class="f-label">Total Due at Move-In</span><span class="f-value">$${parseFloat(leaseData.moveInCosts).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
+        <h4>${isEs ? 'Desglose Financiero de Mudanza' : 'Move-In Financial Breakdown'}</h4>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Renta Mensual' : 'Monthly Rent'}</span><span class="f-value">$${parseFloat(leaseData.rent).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Depósito de Seguridad' : 'Security Deposit'}</span><span class="f-value">$${parseFloat(leaseData.deposit).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
+        <div class="financial-row total"><span class="f-label">${isEs ? 'Total Debido en la Mudanza' : 'Total Due at Move-In'}</span><span class="f-value">$${parseFloat(leaseData.moveInCosts).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
       </div>
     </div>
 
     <div class="callout amber">
-      <h4>⏰ 48-Hour Signing Window</h4>
-      <p>To secure your unit, your lease must be signed within <strong>48 hours</strong> of receiving this email. Failure to sign within this window may result in the unit being released to other applicants. If you require additional time, please contact our team immediately.</p>
+      <h4>⏰ ${isEs ? 'Ventana de Firma de 48 Horas' : '48-Hour Signing Window'}</h4>
+      <p>${isEs ? `Para asegurar su unidad, su arrendamiento debe ser firmado dentro de <strong>48 horas</strong> de recibir este correo electrónico. El incumplimiento de la firma dentro de este período puede resultar en la unidad siendo liberada para otros solicitantes. Si necesita tiempo adicional, póngase en contacto con nuestro equipo inmediatamente.` : `To secure your unit, your lease must be signed within <strong>48 hours</strong> of receiving this email. Failure to sign within this window may result in the unit being released to other applicants. If you require additional time, please contact our team immediately.`}</p>
     </div>
 
     <div class="cta-wrap">
-      <a href="${leaseLink}" class="cta-btn">Review &amp; Sign My Lease</a>
-      <div class="cta-note">Or copy this link into your browser: ${leaseLink}</div>
+      <a href="${leaseLink}" class="cta-btn">${isEs ? 'Revisar & Firmar Mi Arrendamiento' : 'Review & Sign My Lease'}</a>
+      <div class="cta-note">${isEs ? 'O copia este enlace en tu navegador: ' : 'Or copy this link into your browser: '}${leaseLink}</div>
     </div>
 
     <!-- What to Expect -->
     <div class="section">
-      <div class="section-label">What to Expect When You Sign</div>
+      <div class="section-label">${isEs ? 'Qué Esperar Cuando Firmes' : 'What to Expect When You Sign'}</div>
       <ul class="steps-list">
-        <li><span class="step-num">1</span><span><strong>Review the Full Agreement</strong> — Read every section carefully. The lease outlines your rights, responsibilities, and all financial obligations.</span></li>
-        <li><span class="step-num">2</span><span><strong>Confirm Checkboxes</strong> — You will be asked to confirm your agreement to specific terms before signing.</span></li>
-        <li><span class="step-num">3</span><span><strong>Sign Electronically</strong> — Enter your full legal name as your electronic signature. This is legally binding under Michigan and federal e-signature law.</span></li>
-        <li><span class="step-num">4</span><span><strong>Receive Confirmation</strong> — You will receive an immediate email confirmation once your signature is recorded.</span></li>
+        <li><span class="step-num">1</span><span><strong>${isEs ? 'Revisa el Acuerdo Completo' : 'Review the Full Agreement'}</strong> — ${isEs ? 'Lee cuidadosamente cada sección. El arrendamiento describe tus derechos, responsabilidades y todas tus obligaciones financieras.' : 'Read every section carefully. The lease outlines your rights, responsibilities, and all financial obligations.'}</span></li>
+        <li><span class="step-num">2</span><span><strong>${isEs ? 'Confirma las Casillas' : 'Confirm Checkboxes'}</strong> — ${isEs ? 'Se te pedirá que confirmes tu acuerdo a términos específicos antes de firmar.' : 'You will be asked to confirm your agreement to specific terms before signing.'}</span></li>
+        <li><span class="step-num">3</span><span><strong>${isEs ? 'Firma Electrónicamente' : 'Sign Electronically'}</strong> — ${isEs ? 'Ingresa tu nombre legal completo como tu firma electrónica. Esto es legalmente vinculante bajo la ley de firma electrónica de Michigan y federal.' : 'Enter your full legal name as your electronic signature. This is legally binding under Michigan and federal e-signature law.'}</span></li>
+        <li><span class="step-num">4</span><span><strong>${isEs ? 'Recibe Confirmación' : 'Receive Confirmation'}</strong> — ${isEs ? 'Recibirás una confirmación inmediata por correo electrónico una vez que tu firma sea registrada.' : 'You will receive an immediate email confirmation once your signature is recorded.'}</span></li>
       </ul>
     </div>
 
     <div class="contact-row">
-      <strong>Questions?</strong> &nbsp; Text: 707-706-3137 &nbsp;&middot;&nbsp; choicepropertygroup@hotmail.com
+      <strong>${isEs ? '¿Preguntas?' : 'Questions?'}</strong> &nbsp; ${isEs ? 'Envíe un texto a:' : 'Text:'} 707-706-3137 &nbsp;&middot;&nbsp; choicepropertygroup@hotmail.com
     </div>
 
     <div class="email-closing">
-      <p class="closing-text">If you have any questions about the lease terms prior to signing, please contact our leasing team. We are available to clarify any aspect of the agreement.</p>
-      <div class="sign-off">Choice Properties Leasing Team</div>
+      <p class="closing-text">${isEs ? 'Si tiene preguntas sobre los términos del arrendamiento antes de firmar, póngase en contacto con nuestro equipo de arrendamiento. Estamos disponibles para aclarar cualquier aspecto del acuerdo.' : 'If you have any questions about the lease terms prior to signing, please contact our leasing team. We are available to clarify any aspect of the agreement.'}</p>
+      <div class="sign-off">${isEs ? 'Equipo de Arrendamiento de Choice Properties' : 'Choice Properties Leasing Team'}</div>
       <div class="sign-company">choicepropertygroup@hotmail.com</div>
     </div>
 
@@ -2079,79 +2289,80 @@ const EmailTemplates = {
 </div>
 </body>
 </html>
-`,
+`;
+  },
 
   // ── 6. Lease Signed — Tenant ──────────────────────────────
-  leaseSignedTenant: (appId, firstName, leaseData, dashboardLink) => `
+  leaseSignedTenant: (appId, firstName, leaseData, dashboardLink, language = 'en') => {
+    const isEs = String(language).toLowerCase() === 'es';
+    return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Lease Executed — Welcome to Choice Properties</title>
+  <title>${isEs ? 'Arrendamiento Ejecutado' : 'Lease Executed'} — Choice Properties</title>
   <style>${EMAIL_BASE_CSS}</style>
 </head>
 <body>
 <div class="email-wrapper">
 
-  ${buildEmailHeader('Welcome to Choice Properties', appId)}
+  ${buildEmailHeader(isEs ? 'Bienvenido a Choice Properties' : 'Welcome to Choice Properties', appId)}
 
   <div class="status-line status-approved">
-    ✓ &nbsp; Lease Successfully Executed — Your Tenancy is Confirmed
+    ✓ &nbsp; ${isEs ? 'Arrendamiento Ejecutado Exitosamente — Tu Arrendamiento Está Confirmado' : 'Lease Successfully Executed — Your Tenancy is Confirmed'}
   </div>
 
   <div class="email-body">
 
-    <p class="greeting">Dear ${firstName},</p>
+    <p class="greeting">${isEs ? `Estimado ${firstName},` : `Dear ${firstName},`}</p>
 
     <p class="intro-text">
-      Congratulations and welcome to Choice Properties. Your lease agreement has been
-      successfully signed and is now fully executed. This email serves as your official
-      confirmation of tenancy. Please retain it for your records.
+      ${isEs ? `¡Felicitaciones y bienvenido a Choice Properties! Tu acuerdo de arrendamiento ha sido firmado exitosamente y ahora está completamente ejecutado. Este correo electrónico sirve como tu confirmación oficial de arrendamiento. Por favor, guárdalo para tus registros.` : `Congratulations and welcome to Choice Properties. Your lease agreement has been successfully signed and is now fully executed. This email serves as your official confirmation of tenancy. Please retain it for your records.`}
     </p>
 
     <!-- Tenancy Details -->
     <div class="section">
-      <div class="section-label">Your Tenancy Confirmation</div>
+      <div class="section-label">${isEs ? 'Tu Confirmación de Arrendamiento' : 'Your Tenancy Confirmation'}</div>
       <div class="callout green">
-        <h4>✓ Lease Executed — Tenancy Confirmed</h4>
-        <div class="financial-row"><span class="f-label">Property</span><span class="f-value">${leaseData.property}</span></div>
-        <div class="financial-row"><span class="f-label">Move-In Date</span><span class="f-value">${leaseData.startDate}</span></div>
-        <div class="financial-row"><span class="f-label">Lease End Date</span><span class="f-value">${leaseData.endDate}</span></div>
-        <div class="financial-row"><span class="f-label">Monthly Rent</span><span class="f-value">$${parseFloat(leaseData.rent).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
-        <div class="financial-row"><span class="f-label">Move-In Total Due</span><span class="f-value">$${parseFloat(leaseData.moveInCost).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
-        <div class="financial-row"><span class="f-label">Signed By</span><span class="f-value" style="font-style:italic;">${leaseData.signature}</span></div>
-        <div class="financial-row"><span class="f-label">Application Reference</span><span class="f-value">${appId}</span></div>
+        <h4>✓ ${isEs ? 'Arrendamiento Ejecutado — Arrendamiento Confirmado' : 'Lease Executed — Tenancy Confirmed'}</h4>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Propiedad' : 'Property'}</span><span class="f-value">${leaseData.property}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Fecha de Mudanza' : 'Move-In Date'}</span><span class="f-value">${leaseData.startDate}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Fecha de Finalización del Arrendamiento' : 'Lease End Date'}</span><span class="f-value">${leaseData.endDate}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Renta Mensual' : 'Monthly Rent'}</span><span class="f-value">$${parseFloat(leaseData.rent).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Total Debido en la Mudanza' : 'Move-In Total Due'}</span><span class="f-value">$${parseFloat(leaseData.moveInCost).toLocaleString('en-US',{minimumFractionDigits:2})}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Firmado Por' : 'Signed By'}</span><span class="f-value" style="font-style:italic;">${leaseData.signature}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Referencia de Solicitud' : 'Application Reference'}</span><span class="f-value">${appId}</span></div>
       </div>
     </div>
 
     <!-- Next Steps -->
     <div class="section">
-      <div class="section-label">What Happens Next</div>
+      <div class="section-label">${isEs ? 'Qué Pasará Después' : 'What Happens Next'}</div>
       <ul class="steps-list">
-        <li><span class="step-num">1</span><span><strong>Move-In Payment</strong> — Our leasing team will contact you to coordinate collection of your move-in total of <strong>$${parseFloat(leaseData.moveInCost).toLocaleString('en-US',{minimumFractionDigits:2})}</strong>. This must be paid in full prior to key handoff.</span></li>
-        <li><span class="step-num">2</span><span><strong>Move-In Preparation</strong> — We will provide you with a detailed move-in guide and any property-specific information you need to know before your arrival.</span></li>
-        <li><span class="step-num">3</span><span><strong>Key Handoff</strong> — Once all payments are confirmed, your key handoff will be coordinated. Our team will reach out to schedule this at a time that works for you.</span></li>
-        <li><span class="step-num">4</span><span><strong>Your Dashboard</strong> — You may view your lease details and tenancy information at any time through your applicant dashboard.</span></li>
+        <li><span class="step-num">1</span><span><strong>${isEs ? 'Pago de Mudanza' : 'Move-In Payment'}</strong> — ${isEs ? `Nuestro equipo de arrendamiento se comunicará contigo para coordinar la colección de tu total de mudanza de <strong>$${parseFloat(leaseData.moveInCost).toLocaleString('en-US',{minimumFractionDigits:2})}</strong>. Esto debe ser pagado en su totalidad antes de la entrega de llaves.` : `Our leasing team will contact you to coordinate collection of your move-in total of <strong>$${parseFloat(leaseData.moveInCost).toLocaleString('en-US',{minimumFractionDigits:2})}</strong>. This must be paid in full prior to key handoff.`}</span></li>
+        <li><span class="step-num">2</span><span><strong>${isEs ? 'Preparación de Mudanza' : 'Move-In Preparation'}</strong> — ${isEs ? 'Te proporcionaremos una guía detallada de mudanza e información específica de la propiedad que necesites saber antes de tu llegada.' : 'We will provide you with a detailed move-in guide and any property-specific information you need to know before your arrival.'}</span></li>
+        <li><span class="step-num">3</span><span><strong>${isEs ? 'Entrega de Llaves' : 'Key Handoff'}</strong> — ${isEs ? 'Una vez que todos los pagos sean confirmados, se coordinará la entrega de tus llaves. Nuestro equipo se comunicará contigo para programar esto en una hora que te funcione.' : 'Once all payments are confirmed, your key handoff will be coordinated. Our team will reach out to schedule this at a time that works for you.'}</span></li>
+        <li><span class="step-num">4</span><span><strong>${isEs ? 'Tu Panel de Control' : 'Your Dashboard'}</strong> — ${isEs ? 'Puedes ver los detalles de tu arrendamiento e información de tu arrendamiento en cualquier momento a través de tu panel de control del solicitante.' : 'You may view your lease details and tenancy information at any time through your applicant dashboard.'}</span></li>
       </ul>
     </div>
 
     <div class="callout">
-      <h4>Your Point of Contact</h4>
-      <p>For all questions, coordination, or assistance, please contact our team via text at <strong>707-706-3137</strong>. We are committed to ensuring your move-in experience is seamless and professional.</p>
+      <h4>${isEs ? 'Tu Punto de Contacto' : 'Your Point of Contact'}</h4>
+      <p>${isEs ? 'Para todas las preguntas, coordinación o asistencia, póngase en contacto con nuestro equipo por texto a <strong>707-706-3137</strong>. Estamos comprometidos a asegurar que tu experiencia de mudanza sea perfecta y profesional.' : 'For all questions, coordination, or assistance, please contact our team via text at <strong>707-706-3137</strong>. We are committed to ensuring your move-in experience is seamless and professional.'}</p>
     </div>
 
     <div class="cta-wrap">
-      <a href="${dashboardLink}" class="cta-btn">View My Dashboard</a>
+      <a href="${dashboardLink}" class="cta-btn">${isEs ? 'Ver Mi Panel' : 'View My Dashboard'}</a>
     </div>
 
     <div class="contact-row">
-      <strong>Questions?</strong> &nbsp; Text: 707-706-3137 &nbsp;&middot;&nbsp; choicepropertygroup@hotmail.com
+      <strong>${isEs ? '¿Preguntas?' : 'Questions?'}</strong> &nbsp; ${isEs ? 'Envíe un texto a:' : 'Text:'} 707-706-3137 &nbsp;&middot;&nbsp; choicepropertygroup@hotmail.com
     </div>
 
     <div class="email-closing">
-      <p class="closing-text">We are truly delighted to welcome you to Choice Properties. Our team is dedicated to ensuring your tenancy is a positive and comfortable experience from day one.</p>
-      <div class="sign-off">Choice Properties Leasing Team</div>
+      <p class="closing-text">${isEs ? 'Estamos realmente encantados de darte la bienvenida a Choice Properties. Nuestro equipo está dedicado a asegurar que tu arrendamiento sea una experiencia positiva y cómoda desde el primer día.' : 'We are truly delighted to welcome you to Choice Properties. Our team is dedicated to ensuring your tenancy is a positive and comfortable experience from day one.'}</p>
+      <div class="sign-off">${isEs ? 'Equipo de Arrendamiento de Choice Properties' : 'Choice Properties Leasing Team'}</div>
       <div class="sign-company">choicepropertygroup@hotmail.com</div>
     </div>
 
@@ -2160,76 +2371,77 @@ const EmailTemplates = {
 </div>
 </body>
 </html>
-`,
+`;
+  },
 
   // ── 7. Lease Signed — Admin Alert ────────────────────────
-  leaseSignedAdmin: (appId, tenantName, email, phone, signature, property, adminUrl) => `
+  leaseSignedAdmin: (appId, tenantName, email, phone, signature, property, adminUrl, language = 'en') => {
+    const isEs = String(language).toLowerCase() === 'es';
+    return `
 <!DOCTYPE html>
-<html lang="en">
+<html lang="${isEs ? 'es' : 'en'}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Lease Signed — ${appId}</title>
+  <title>${isEs ? 'Arrendamiento Firmado' : 'Lease Signed'} — ${appId}</title>
   <style>${EMAIL_BASE_CSS}</style>
 </head>
 <body>
 <div class="email-wrapper">
 
-  ${buildEmailHeader('Lease Signed — Action Required', appId)}
+  ${buildEmailHeader(isEs ? 'Arrendamiento Firmado — Acción Requerida' : 'Lease Signed — Action Required', appId)}
 
   <div class="status-line status-approved">
-    ✍️ &nbsp; Tenant Has Executed the Lease — Collect Move-In Payment
+    ✍️ &nbsp; ${isEs ? 'El Inquilino Ha Ejecutado el Arrendamiento — Colecta el Pago de Mudanza' : 'Tenant Has Executed the Lease — Collect Move-In Payment'}
   </div>
 
   <div class="email-body">
 
-    <p class="greeting">Leasing Team,</p>
+    <p class="greeting">${isEs ? 'Equipo de Arrendamiento,' : 'Leasing Team,'}</p>
 
     <p class="intro-text">
-      The lease agreement for application <strong>${appId}</strong> has been electronically signed
-      and is now fully executed. Please initiate contact with the tenant to coordinate collection
-      of the move-in payment and schedule the key handoff.
+      ${isEs ? `El acuerdo de arrendamiento para la solicitud <strong>${appId}</strong> ha sido firmado electrónicamente y ahora está completamente ejecutado. Por favor, inicia contacto con el inquilino para coordinar la colección del pago de mudanza y programar la entrega de llaves.` : `The lease agreement for application <strong>${appId}</strong> has been electronically signed and is now fully executed. Please initiate contact with the tenant to coordinate collection of the move-in payment and schedule the key handoff.`}
     </p>
 
     <!-- Execution Details -->
     <div class="section">
-      <div class="section-label">Lease Execution Details</div>
+      <div class="section-label">${isEs ? 'Detalles de Ejecución del Arrendamiento' : 'Lease Execution Details'}</div>
       <div class="callout green">
-        <h4>✓ Lease Successfully Executed</h4>
-        <div class="financial-row"><span class="f-label">Tenant</span><span class="f-value">${tenantName}</span></div>
-        <div class="financial-row"><span class="f-label">Property</span><span class="f-value">${property}</span></div>
-        <div class="financial-row"><span class="f-label">Email</span><span class="f-value">${email}</span></div>
-        <div class="financial-row"><span class="f-label">Phone</span><span class="f-value">${phone}</span></div>
-        <div class="financial-row"><span class="f-label">Signature Recorded</span><span class="f-value" style="font-style:italic;">"${signature}"</span></div>
-        <div class="financial-row"><span class="f-label">Executed At</span><span class="f-value">${new Date().toLocaleString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span></div>
-        <div class="financial-row"><span class="f-label">Application ID</span><span class="f-value">${appId}</span></div>
+        <h4>✓ ${isEs ? 'Arrendamiento Ejecutado Exitosamente' : 'Lease Successfully Executed'}</h4>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Inquilino' : 'Tenant'}</span><span class="f-value">${tenantName}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Propiedad' : 'Property'}</span><span class="f-value">${property}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Correo Electrónico' : 'Email'}</span><span class="f-value">${email}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Teléfono' : 'Phone'}</span><span class="f-value">${phone}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Firma Registrada' : 'Signature Recorded'}</span><span class="f-value" style="font-style:italic;">"${signature}"</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'Ejecutado A' : 'Executed At'}</span><span class="f-value">${new Date().toLocaleString(isEs ? 'es-ES' : 'en-US', {weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span></div>
+        <div class="financial-row"><span class="f-label">${isEs ? 'ID de Solicitud' : 'Application ID'}</span><span class="f-value">${appId}</span></div>
       </div>
     </div>
 
     <!-- Required Actions -->
     <div class="section">
-      <div class="section-label">Required Actions</div>
+      <div class="section-label">${isEs ? 'Acciones Requeridas' : 'Required Actions'}</div>
       <ul class="steps-list">
-        <li><span class="step-num">1</span><span><strong>Collect Move-In Payment</strong> — Contact the tenant immediately to arrange collection of the move-in total (first month + security deposit).</span></li>
-        <li><span class="step-num">2</span><span><strong>Confirm Move-In Date</strong> — Coordinate and confirm the official move-in date with the tenant once payment is received.</span></li>
-        <li><span class="step-num">3</span><span><strong>Key Handoff</strong> — Schedule and complete the key handoff on or before the agreed move-in date.</span></li>
-        <li><span class="step-num">4</span><span><strong>Update Records</strong> — Ensure all internal records and the admin dashboard reflect the completed lease status.</span></li>
+        <li><span class="step-num">1</span><span><strong>${isEs ? 'Colecta el Pago de Mudanza' : 'Collect Move-In Payment'}</strong> — ${isEs ? 'Contacta al inquilino inmediatamente para coordinar la colección del total de mudanza (primer mes + depósito de seguridad).' : 'Contact the tenant immediately to arrange collection of the move-in total (first month + security deposit).'}</span></li>
+        <li><span class="step-num">2</span><span><strong>${isEs ? 'Confirma la Fecha de Mudanza' : 'Confirm Move-In Date'}</strong> — ${isEs ? 'Coordina y confirma la fecha oficial de mudanza con el inquilino una vez que se reciba el pago.' : 'Coordinate and confirm the official move-in date with the tenant once payment is received.'}</span></li>
+        <li><span class="step-num">3</span><span><strong>${isEs ? 'Entrega de Llaves' : 'Key Handoff'}</strong> — ${isEs ? 'Programa y completa la entrega de llaves en o antes de la fecha de mudanza acordada.' : 'Schedule and complete the key handoff on or before the agreed move-in date.'}</span></li>
+        <li><span class="step-num">4</span><span><strong>${isEs ? 'Actualiza Registros' : 'Update Records'}</strong> — ${isEs ? 'Asegúrate de que todos los registros internos y el panel de admin reflejen el estado de arrendamiento completado.' : 'Ensure all internal records and the admin dashboard reflect the completed lease status.'}</span></li>
       </ul>
     </div>
 
     <!-- Quick Actions -->
     <div class="section">
-      <div class="section-label">Quick Actions</div>
+      <div class="section-label">${isEs ? 'Acciones Rápidas' : 'Quick Actions'}</div>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
-        <a href="${adminUrl}" style="display:inline-block;background:#0a1628;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">Admin Dashboard</a>
-        <a href="sms:7077063137?body=Hi%20${tenantName.split(' ')[0]}%2C%20congratulations%20on%20signing%20your%20lease%20for%20${encodeURIComponent(property)}.%20Please%20contact%20us%20to%20arrange%20your%20move-in%20payment." style="display:inline-block;background:#059669;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">Text Tenant</a>
-        <a href="mailto:${email}?subject=Next Steps — Move-In Coordination — ${appId}" style="display:inline-block;background:#1d4ed8;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">Email Tenant</a>
+        <a href="${adminUrl}" style="display:inline-block;background:#0a1628;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Panel de Admin' : 'Admin Dashboard'}</a>
+        <a href="sms:7077063137?body=Hola%20${tenantName.split(' ')[0]}%2C%20felicitaciones%20por%20firmar%20tu%20arrendamiento%20para%20${encodeURIComponent(property)}.%20Por%20favor%20%20contáctanos%20para%20coordinar%20tu%20pago%20de%20mudanza." style="display:inline-block;background:#059669;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Enviar SMS' : 'Text Tenant'}</a>
+        <a href="mailto:${email}?subject=${isEs ? 'Próximos Pasos' : 'Next Steps'} — ${isEs ? 'Coordinación de Mudanza' : 'Move-In Coordination'} — ${appId}" style="display:inline-block;background:#1d4ed8;color:white;text-decoration:none;padding:11px 22px;border-radius:3px;font-size:13px;font-weight:600;letter-spacing:0.5px;">${isEs ? 'Enviar Correo' : 'Email Tenant'}</a>
       </div>
     </div>
 
     <div class="email-closing">
-      <div class="sign-off">Choice Properties System</div>
-      <div class="sign-company">Automated Admin Alert — ${appId}</div>
+      <div class="sign-off">${isEs ? 'Sistema de Choice Properties' : 'Choice Properties System'}</div>
+      <div class="sign-company">${isEs ? 'Alerta Automática de Admin' : 'Automated Admin Alert'} — ${appId}</div>
     </div>
 
   </div>
@@ -2237,7 +2449,8 @@ const EmailTemplates = {
 </div>
 </body>
 </html>
-`
+`;
+  }
 };
 
 // ============================================================
@@ -2249,9 +2462,14 @@ function sendApplicantConfirmation(data, appId) {
     const paymentMethods = buildPaymentMethodList(data, false);
     const baseUrl        = ScriptApp.getService().getUrl();
     const dashboardLink  = baseUrl + '?path=dashboard&id=' + appId;
-    const htmlBody = EmailTemplates.applicantConfirmation(data, appId, dashboardLink, paymentMethods);
+    const language       = (data['Preferred Language'] || 'en').toLowerCase() === 'es' ? 'es' : 'en';
+    const htmlBody = EmailTemplates.applicantConfirmation(data, appId, dashboardLink, paymentMethods, language);
+    const subject = language === 'es'
+      ? `Choice Properties - Solicitud Recibida (Ref: ${appId})`
+      : `Choice Properties - Application Received (Ref: ${appId})`;
+
     MailApp.sendEmail({
-      to: data['Email'], subject: `Choice Properties - Application Received (Ref: ${appId})`,
+      to: data['Email'], subject: subject,
       htmlBody: htmlBody, name: 'Choice Properties Leasing'
     });
     return true;
@@ -2264,11 +2482,12 @@ function sendAdminNotification(data, appId) {
     const paymentMethods = buildPaymentMethodList(data, true);
     const baseUrl       = ScriptApp.getService().getUrl();
     const dashboardLink = baseUrl + '?path=dashboard&id=' + appId;
-    const htmlBody = EmailTemplates.adminNotification(data, appId, baseUrl, dashboardLink, paymentMethods);
+    const language      = (data['Preferred Language'] || 'en').toLowerCase() === 'es' ? 'es' : 'en';
+    const htmlBody = EmailTemplates.adminNotification(data, appId, baseUrl, dashboardLink, paymentMethods, language);
     adminEmails.forEach(email => {
       MailApp.sendEmail({
         to: email,
-        subject: `🔔 NEW APPLICATION: ${appId} - ${data['First Name']} ${data['Last Name']}`,
+        subject: `🔔 ${language === 'es' ? 'NUEVA SOLICITUD:' : 'NEW APPLICATION:'} ${appId} - ${data['First Name']} ${data['Last Name']}`,
         htmlBody: htmlBody, name: 'Choice Properties System'
       });
     });
@@ -2276,28 +2495,33 @@ function sendAdminNotification(data, appId) {
   } catch (error) { console.error('sendAdminNotification error:', error); return false; }
 }
 
-function sendPaymentConfirmation(appId, applicantEmail, applicantName, phone) {
+function sendPaymentConfirmation(appId, applicantEmail, applicantName, phone, language='en') {
   try {
     const baseUrl       = ScriptApp.getService().getUrl();
     const dashboardLink = baseUrl + '?path=dashboard&id=' + appId;
+    const lang = language.toLowerCase() === 'es' ? 'es' : 'en';
     MailApp.sendEmail({
       to: applicantEmail,
-      subject: `✅ Payment Confirmed - Application ${appId}`,
-      htmlBody: EmailTemplates.paymentConfirmation(appId, applicantName, phone, dashboardLink),
+      subject: lang === 'es' ? `✅ Pago Confirmado - Solicitud ${appId}` : `✅ Payment Confirmed - Application ${appId}`,
+      htmlBody: EmailTemplates.paymentConfirmation(appId, applicantName, phone, dashboardLink, lang),
       name: 'Choice Properties'
     });
     return true;
   } catch (error) { console.error('sendPaymentConfirmation error:', error); return false; }
 }
 
-function sendStatusUpdateEmail(appId, email, firstName, status, reason) {
+function sendStatusUpdateEmail(appId, email, firstName, status, reason, language='en') {
   try {
     const baseUrl       = ScriptApp.getService().getUrl();
     const dashboardLink = baseUrl + '?path=dashboard&id=' + appId;
+    const lang = language.toLowerCase() === 'es' ? 'es' : 'en';
+    const subject = lang === 'es'
+      ? (status === 'approved' ? `✅ Solicitud Aprobada - ${appId}` : `Actualización de Solicitud - ${appId}`)
+      : (status === 'approved' ? `✅ Application Approved - ${appId}` : `Application Update - ${appId}`);
     MailApp.sendEmail({
       to: email,
-      subject: status === 'approved' ? `✅ Application Approved - ${appId}` : `Application Update - ${appId}`,
-      htmlBody: EmailTemplates.statusUpdate(appId, firstName, status, reason, dashboardLink),
+      subject: subject,
+      htmlBody: EmailTemplates.statusUpdate(appId, firstName, status, reason, dashboardLink, lang),
       name: 'Choice Properties'
     });
     return true;
@@ -2305,12 +2529,13 @@ function sendStatusUpdateEmail(appId, email, firstName, status, reason) {
 }
 
 // ── [NEW] sendLeaseEmail ──────────────────────────────────
-function sendLeaseEmail(appId, email, tenantName, phone, leaseLink, leaseData) {
+function sendLeaseEmail(appId, email, tenantName, phone, leaseLink, leaseData, language='en') {
   try {
+    const lang = language.toLowerCase() === 'es' ? 'es' : 'en';
     MailApp.sendEmail({
       to: email,
-      subject: `📜 Your Lease is Ready to Sign - ${appId}`,
-      htmlBody: EmailTemplates.leaseSent(appId, tenantName, leaseLink, leaseData),
+      subject: lang === 'es' ? `📜 Tu Arrendamiento Está Listo para Firmar - ${appId}` : `📜 Your Lease is Ready to Sign - ${appId}`,
+      htmlBody: EmailTemplates.leaseSent(appId, tenantName, leaseLink, leaseData, lang),
       name: 'Choice Properties Leasing'
     });
     return true;
@@ -2318,14 +2543,15 @@ function sendLeaseEmail(appId, email, tenantName, phone, leaseLink, leaseData) {
 }
 
 // ── [NEW] sendLeaseSignedTenantEmail ─────────────────────
-function sendLeaseSignedTenantEmail(appId, email, firstName, phone, leaseData) {
+function sendLeaseSignedTenantEmail(appId, email, firstName, phone, leaseData, language='en') {
   try {
     const baseUrl       = ScriptApp.getService().getUrl();
     const dashboardLink = baseUrl + '?path=dashboard&id=' + appId;
+    const lang = language.toLowerCase() === 'es' ? 'es' : 'en';
     MailApp.sendEmail({
       to: email,
-      subject: `🎉 Lease Signed - Welcome to Choice Properties! (${appId})`,
-      htmlBody: EmailTemplates.leaseSignedTenant(appId, firstName, leaseData, dashboardLink),
+      subject: lang === 'es' ? `🎉 Arrendamiento Firmado - ¡Bienvenido a Choice Properties! (${appId})` : `🎉 Lease Signed - Welcome to Choice Properties! (${appId})`,
+      htmlBody: EmailTemplates.leaseSignedTenant(appId, firstName, leaseData, dashboardLink, lang),
       name: 'Choice Properties Leasing'
     });
     return true;
@@ -2333,16 +2559,17 @@ function sendLeaseSignedTenantEmail(appId, email, firstName, phone, leaseData) {
 }
 
 // ── [NEW] sendLeaseSignedAdminAlert ──────────────────────
-function sendLeaseSignedAdminAlert(appId, tenantName, email, phone, signature, property) {
+function sendLeaseSignedAdminAlert(appId, tenantName, email, phone, signature, property, language='en') {
   try {
     const adminEmails = getAdminEmails();
     const baseUrl     = ScriptApp.getService().getUrl();
     const adminUrl    = baseUrl + '?path=admin';
+    const lang = language.toLowerCase() === 'es' ? 'es' : 'en';
     adminEmails.forEach(adminEmail => {
       MailApp.sendEmail({
         to: adminEmail,
-        subject: `✍️ LEASE SIGNED: ${appId} - ${tenantName}`,
-        htmlBody: EmailTemplates.leaseSignedAdmin(appId, tenantName, email, phone, signature, property, adminUrl),
+        subject: lang === 'es' ? `✍️ ARRENDAMIENTO FIRMADO: ${appId} - ${tenantName}` : `✍️ LEASE SIGNED: ${appId} - ${tenantName}`,
+        htmlBody: EmailTemplates.leaseSignedAdmin(appId, tenantName, email, phone, signature, property, adminUrl, lang),
         name: 'Choice Properties System'
       });
     });
@@ -2449,7 +2676,8 @@ function updateStatus(appId, newStatus, notes) {
     }
     const email     = sheet.getRange(rowIndex, col['Email']).getValue();
     const firstName = sheet.getRange(rowIndex, col['First Name']).getValue();
-    sendStatusUpdateEmail(appId, email, firstName, newStatus, notes);
+    const lang      = col['Preferred Language'] ? sheet.getRange(rowIndex, col['Preferred Language']).getValue() : 'en';
+    sendStatusUpdateEmail(appId, email, firstName, newStatus, notes, lang);
     logEmail('status_update', email, 'success', appId);
     return { success: true, message: `Status updated to ${newStatus}` };
   } catch (error) {
@@ -3757,6 +3985,77 @@ function renderAdminPanel() {
       color: #475569;
       margin-bottom: 14px;
     }
+
+    /* ── Properties Panel ── */
+    .properties-panel {
+      background: white;
+      border-radius: 16px;
+      border: 1.5px solid #f1f5f9;
+      overflow: hidden;
+    }
+    .panel-header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #f1f5f9;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-header h2 {
+      font-size: 18px;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 0;
+    }
+    .properties-grid {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 20px;
+    }
+    .property-card {
+      background: white;
+      border: 1.5px solid #f1f5f9;
+      border-radius: 16px;
+      padding: 20px;
+      transition: all .2s;
+    }
+    .property-card:hover {
+      border-color: #e2e8f0;
+      box-shadow: 0 4px 16px rgba(0,0,0,.06);
+    }
+    .property-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .property-header h3 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1e293b;
+      margin: 0;
+      flex: 1;
+    }
+    .property-id {
+      font-size: 12px;
+      color: #64748b;
+      background: #f8fafc;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+    .property-details {
+      margin-bottom: 16px;
+    }
+    .detail-item {
+      font-size: 13px;
+      color: #475569;
+      margin-bottom: 6px;
+    }
+    .property-actions {
+      display: flex;
+      gap: 8px;
+    }
     .move-in-preview {
       background: linear-gradient(135deg,#eff6ff,#dbeafe);
       border: 1.5px solid #bfdbfe;
@@ -3816,7 +4115,9 @@ function renderAdminPanel() {
     <div class="sidebar-user">
       <div class="user-pill">👤 ${userEmail}</div>
     </div>
-    <div class="nav-label">Filters</div>
+    <div class="nav-label">Management</div>
+    <button class="nav-item" onclick="showPropertiesPanel()">🏠 Properties</button>
+    <div class="nav-label">Applications</div>
     <button class="nav-item active" id="navAll"      onclick="filterApps('all',this)">📊 All Applications <span class="badge-mini" id="sNavTotal">${total}</span></button>
     <button class="nav-item"        id="navPending"  onclick="filterApps('pending',this)">⏳ Pending Payment <span class="badge-mini" id="sNavPend">${pendingPayment}</span></button>
     <button class="nav-item"        id="navReview"   onclick="filterApps('paid',this)">🔍 Under Review <span class="badge-mini" id="sNavReview">${underReview}</span></button>
@@ -4434,6 +4735,160 @@ function renderAdminPanel() {
     applyFilterAndSearch();
   });
 
+  function showPropertiesPanel() {
+    // Update navigation
+    document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+    event.target.classList.add('active');
+
+    // Show properties panel
+    const container = document.getElementById('applicationsContainer');
+    container.innerHTML = `
+      <div class="properties-panel">
+        <div class="panel-header">
+          <h2>🏠 Property Management</h2>
+          <button class="btn-primary" onclick="showAddPropertyModal()">+ Add Property</button>
+        </div>
+        <div class="properties-grid" id="propertiesGrid">
+          <div class="loading">Loading properties...</div>
+        </div>
+      </div>
+    `;
+
+    // Load properties
+    loadProperties();
+  }
+
+  function loadProperties() {
+    google.script.run
+      .withSuccessHandler(function(properties) {
+        const grid = document.getElementById('propertiesGrid');
+        if (!properties || properties.length === 0) {
+          grid.innerHTML = '<div class="empty-state">No properties configured yet. Add your first property to get started!</div>';
+          return;
+        }
+
+        grid.innerHTML = properties.map(prop => `
+          <div class="property-card">
+            <div class="property-header">
+              <h3>${prop.Address || 'No Address'}</h3>
+              <span class="property-id">${prop.PropertyID}</span>
+            </div>
+            <div class="property-details">
+              <div class="detail-item">📍 ${prop.City || 'N/A'}, ${prop.State || 'N/A'}</div>
+              <div class="detail-item">💰 $${prop.Rent || 0}/month</div>
+              <div class="detail-item">🔒 $${prop.Deposit || 0} deposit</div>
+              <div class="detail-item">📄 ${prop.ApplicationFee || 0} app fee</div>
+            </div>
+            <div class="property-actions">
+              <button class="btn-secondary" onclick="editProperty('${prop.PropertyID}')">Edit</button>
+              <button class="btn-danger" onclick="deleteProperty('${prop.PropertyID}')">Delete</button>
+            </div>
+          </div>
+        `).join('');
+      })
+      .getAllProperties();
+  }
+
+  function showAddPropertyModal() {
+    // Simple modal for adding properties
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay open';
+    modal.innerHTML = `
+      <div class="modal-box">
+        <div class="modal-header">
+          <h3>Add New Property</h3>
+          <button onclick="this.closest('.modal-overlay').remove()">×</button>
+        </div>
+        <div class="modal-body">
+          <form id="propertyForm">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Property ID:</label>
+                <input type="text" name="propertyId" placeholder="PROP001" required>
+              </div>
+              <div class="form-group">
+                <label>State:</label>
+                <select name="state" required>
+                  <option value="CA">California</option>
+                  <option value="TX">Texas</option>
+                  <option value="FL">Florida</option>
+                  <option value="NY">New York</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Address:</label>
+              <input type="text" name="address" placeholder="123 Main St" required>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>City:</label>
+                <input type="text" name="city" required>
+              </div>
+              <div class="form-group">
+                <label>ZIP:</label>
+                <input type="text" name="zip" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Monthly Rent ($):</label>
+                <input type="number" name="rent" required>
+              </div>
+              <div class="form-group">
+                <label>Security Deposit ($):</label>
+                <input type="number" name="deposit" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Application Fee ($):</label>
+                <input type="number" name="applicationFee" value="25">
+              </div>
+              <div class="form-group">
+                <label>Parking Fee ($):</label>
+                <input type="number" name="parkingFee" value="0">
+              </div>
+            </div>
+          </form>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="this.closest('.modal-overlay').remove()">Cancel</button>
+          <button class="btn-primary" onclick="saveProperty()">Save Property</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  function saveProperty() {
+    const form = document.getElementById('propertyForm');
+    const formData = new FormData(form);
+
+    const propertyData = {
+      PropertyID: formData.get('propertyId'),
+      State: formData.get('state'),
+      Address: formData.get('address'),
+      City: formData.get('city'),
+      Zip: formData.get('zip'),
+      Rent: parseFloat(formData.get('rent')) || 0,
+      Deposit: parseFloat(formData.get('deposit')) || 0,
+      ApplicationFee: parseFloat(formData.get('applicationFee')) || 25,
+      ParkingFee: parseFloat(formData.get('parkingFee')) || 0
+    };
+
+    google.script.run
+      .withSuccessHandler(function(result) {
+        if (result.success) {
+          document.querySelector('.modal-overlay').remove();
+          loadProperties();
+        } else {
+          alert('Error: ' + result.error);
+        }
+      })
+      .addProperty(propertyData);
+  }
+
   window.onload = function() {
     currentFilter = 'all';
     currentSearch = '';
@@ -4463,7 +4918,19 @@ function buildAdminCard(app, baseUrl) {
     : app['Status']==='approved' ? 'approved'
     : app['Status']==='denied' ? 'denied' : 'paid';
 
-  const searchTerms   = (app['First Name']+' '+app['Last Name']+' '+app['Email']+' '+app['App ID']+' '+(app['Property Address']||'')).toLowerCase();
+  const searchTerms   = (
+    (app['First Name'] || '') + ' ' +
+    (app['Last Name'] || '') + ' ' +
+    (app['Email'] || '') + ' ' +
+    (app['App ID'] || '') + ' ' +
+    (app['Phone'] || '') + ' ' +
+    (app['Property Address'] || '') + ' ' +
+    (app['City'] || '') + ' ' +
+    (app['State'] || '') + ' ' +
+    (app['Employer'] || '') + ' ' +
+    (app['Primary Payment Method'] || '') + ' ' +
+    (app['Lease Status'] || '')
+  ).toLowerCase();
   const contactMethod = app['Preferred Contact Method'] || 'Not specified';
   const contactTimes  = app['Preferred Time']            || 'Any';
   const canMarkPaid   = app['Payment Status'] === 'unpaid';

@@ -46,7 +46,7 @@ class RentalApplication {
         this.retryCount = 0;
         this.retryTimeout = null;
         
-        this.BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxRo3T68MfK1pT7SiIsbSgVQTtWJB2wSzQA8G9NTcpZqkYSI7SKl7HpHjL5e-wc98AK/exec';
+        this.BACKEND_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec'; // Replace YOUR_SCRIPT_ID with actual GAS deployment ID
         
         this.initialize();
     }
@@ -122,6 +122,7 @@ class RentalApplication {
         this.setupGeoapify();
         this.setupInputFormatting();
         this.setupLanguageToggle();
+        this.setupPropertyData();
         this.setupAccessibility();
         
         const savedAppId = sessionStorage.getItem('lastSuccessAppId');
@@ -261,36 +262,38 @@ class RentalApplication {
 
     // ---------- Validation logic (unchanged) ----------
     validateField(field) {
+        const t = this.getTranslations();
         let isValid = true;
-        let errorMessage = 'Required';
+        let errorMessage = t.errRequired || 'Required';
+
         if (field.id === 'ssn' || field.id === 'coSsn') {
             const ssnVal = field.value.replace(/\D/g, '');
             if (!ssnVal) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'Please enter the last 4 digits of your SSN.' : 'Por favor ingrese los últimos 4 dígitos de su SSN.';
+                errorMessage = t.errSsnRequired;
             } else if (ssnVal.length < 4) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'SSN must contain 4 digits.' : 'El SSN debe contener 4 dígitos.';
+                errorMessage = t.errSsn4Digits;
             } else if (/[^0-9]/.test(field.value)) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'SSN must contain numbers only.' : 'El SSN debe contener solo números.';
+                errorMessage = t.errSsnNumbersOnly;
             }
         } else if (field.id === 'dob' || field.id === 'coDob') {
             const birthDate = new Date(field.value);
             const today = new Date();
             if (!field.value) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'Please enter your date of birth.' : 'Por favor ingrese su fecha de nacimiento.';
+                errorMessage = t.errDobRequired;
             } else if (isNaN(birthDate.getTime())) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'Please enter a valid date of birth (18+ required).' : 'Por favor ingrese una fecha válida (18+ requerido).';
+                errorMessage = t.errDobInvalid;
             } else {
                 let age = today.getFullYear() - birthDate.getFullYear();
                 const m = today.getMonth() - birthDate.getMonth();
                 if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
                 if (age < 18) {
                     isValid = false;
-                    errorMessage = this.state.language === 'en' ? 'Applicants must be at least 18 years old.' : 'Los solicitantes deben tener al menos 18 años.';
+                    errorMessage = t.errDobUnder18;
                 }
             }
         } else if (field.id === 'requestedMoveIn') {
@@ -299,10 +302,10 @@ class RentalApplication {
             today.setHours(0, 0, 0, 0);
             if (!field.value) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'Please select a move-in date.' : 'Por favor seleccione una fecha de mudanza.';
+                errorMessage = t.errMoveInRequired;
             } else if (moveInDate < today) {
                 isValid = false;
-                errorMessage = this.state.language === 'en' ? 'Move-in date cannot be in the past.' : 'La fecha de mudanza no puede ser en el pasado.';
+                errorMessage = t.errMoveInPast;
             }
         } else if (field.hasAttribute('required')) {
             if (field.type === 'checkbox') {
@@ -311,7 +314,7 @@ class RentalApplication {
                 isValid = false;
             }
             if (!isValid) {
-                errorMessage = this.state.language === 'en' ? 'Required' : 'Campo obligatorio';
+                errorMessage = t.errRequired;
             }
         }
         if (isValid && field.value.trim()) {
@@ -319,17 +322,17 @@ class RentalApplication {
                 const email = field.value.trim();
                 if (!email.includes('@')) {
                     isValid = false;
-                    errorMessage = this.state.language === 'en' ? 'Email must include an @ symbol.' : 'El correo debe incluir un símbolo @.';
+                    errorMessage = t.errEmailAtSymbol || 'Email must include an @ symbol.';
                 } else {
                     const parts = email.split('@');
                     if (!parts[1] || !parts[1].includes('.')) {
                         isValid = false;
-                        errorMessage = this.state.language === 'en' ? 'Add a valid domain (e.g., gmail.com).' : 'Agregue un dominio válido (ej. gmail.com).';
+                        errorMessage = t.errEmailDomain || 'Add a valid domain (e.g., gmail.com).';
                     } else {
                         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                         isValid = emailRegex.test(email);
                         if (!isValid) {
-                            errorMessage = this.state.language === 'en' ? 'Enter a valid email (example: name@email.com).' : 'Ingrese un correo válido (ejemplo: nombre@email.com).';
+                            errorMessage = t.errEmailFormat || 'Enter a valid email (example: name@email.com).';
                         }
                     }
                 }
@@ -337,7 +340,7 @@ class RentalApplication {
                 const phoneDigits = field.value.replace(/\D/g, '');
                 isValid = phoneDigits.length >= 10;
                 if (!isValid) {
-                    errorMessage = this.state.language === 'en' ? 'Invalid phone' : 'Teléfono inválido';
+                    errorMessage = t.errPhone || 'Invalid phone';
                 }
             }
         }
@@ -711,6 +714,9 @@ class RentalApplication {
                 emailPlaceholder: 'email@example.com',
                 emailHint: 'Make sure the provided email is correct and accessible. Confirmation and updates sent here.',
                 errEmail: 'Invalid email',
+                errEmailAtSymbol: 'Email must include an @ symbol.',
+                errEmailDomain: 'Add a valid domain (e.g., gmail.com).',
+                errEmailFormat: 'Enter a valid email (example: name@email.com).',
                 phoneLabel: 'Phone Number',
                 phonePlaceholder: '(555) 000-0000',
                 phoneHint: 'Our team will contact you here.',
@@ -719,6 +725,14 @@ class RentalApplication {
                 ssnLabel: 'Social Security Number (Last 4 Digits)',
                 ssnHint: 'Only last 4 digits required',
                 ssnPlaceholder: '1234',
+                errSsnRequired: 'Please enter the last 4 digits of your SSN.',
+                errSsn4Digits: 'SSN must contain 4 digits.',
+                errSsnNumbersOnly: 'SSN must contain numbers only.',
+                errDobRequired: 'Please enter your date of birth.',
+                errDobInvalid: 'Please enter a valid date of birth (18+ required).',
+                errDobUnder18: 'Applicants must be at least 18 years old.',
+                errMoveInRequired: 'Please select a move-in date.',
+                errMoveInPast: 'Move-in date cannot be in the past.',
                 coApplicantCheckbox: 'I have a co-applicant or guarantor',
                 coApplicantInfo: 'Additional Person Information',
                 coRoleLabel: 'Role (Select one)',
@@ -940,6 +954,9 @@ class RentalApplication {
                 emailPlaceholder: 'email@ejemplo.com',
                 emailHint: 'Asegúrese de que el correo proporcionado sea correcto y accesible. La confirmación y actualizaciones se enviarán aquí.',
                 errEmail: 'Correo inválido',
+                errEmailAtSymbol: 'El correo debe incluir un símbolo @.',
+                errEmailDomain: 'Agregue un dominio válido (ej. gmail.com).',
+                errEmailFormat: 'Ingrese un correo válido (ejemplo: nombre@email.com).',
                 phoneLabel: 'Número de Teléfono',
                 phonePlaceholder: '(555) 000-0000',
                 phoneHint: 'Nuestro equipo lo contactará aquí.',
@@ -948,6 +965,14 @@ class RentalApplication {
                 ssnLabel: 'Número de Seguro Social (Últimos 4 dígitos)',
                 ssnHint: 'Solo últimos 4 dígitos requeridos',
                 ssnPlaceholder: '1234',
+                errSsnRequired: 'Por favor ingrese los últimos 4 dígitos de su SSN.',
+                errSsn4Digits: 'El SSN debe contener 4 dígitos.',
+                errSsnNumbersOnly: 'El SSN debe contener solo números.',
+                errDobRequired: 'Por favor ingrese su fecha de nacimiento.',
+                errDobInvalid: 'Por favor ingrese una fecha válida (18+ requerido).',
+                errDobUnder18: 'Los solicitantes deben tener al menos 18 años.',
+                errMoveInRequired: 'Por favor seleccione una fecha de mudanza.',
+                errMoveInPast: 'La fecha de mudanza no puede ser en el pasado.',
                 coApplicantCheckbox: 'Tengo un co-solicitante o fiador',
                 coApplicantInfo: 'Información de Persona Adicional',
                 coRoleLabel: 'Rol (Seleccione uno)',
@@ -1101,59 +1126,86 @@ class RentalApplication {
 
         this.translations = translations;
         this.state.language = 'en';
-        document.documentElement.lang = this.state.language;
+
+        const savedLang = localStorage.getItem('choicePropertiesLanguage');
+        if (savedLang && translations[savedLang]) {
+            this.state.language = savedLang;
+        }
+
         const btn = document.getElementById('langToggle');
         const text = document.getElementById('langText');
-        
+        const preferredLanguageInput = document.getElementById('preferredLanguage');
+
+        const applyTranslations = () => {
+            const t = translations[this.state.language];
+            document.documentElement.lang = this.state.language;
+            if (text) text.textContent = t.langText;
+            if (preferredLanguageInput) preferredLanguageInput.value = this.state.language;
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (t[key]) {
+                    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                        if ('placeholder' in el) el.placeholder = t[key];
+                    } else if (el.tagName === 'OPTION') {
+                        el.textContent = t[key];
+                    } else {
+                        el.textContent = t[key];
+                    }
+                }
+            });
+
+            document.querySelectorAll('.btn-next').forEach(b => {
+                const icon = b.querySelector('i');
+                b.innerHTML = '';
+                const textSpan = document.createElement('span');
+                textSpan.setAttribute('data-i18n', 'nextStep');
+                textSpan.textContent = t.nextStep;
+                b.appendChild(textSpan);
+                if (icon) b.appendChild(icon);
+            });
+
+            document.querySelectorAll('.btn-prev').forEach(b => {
+                const icon = b.querySelector('i');
+                b.innerHTML = '';
+                if (icon) b.appendChild(icon);
+                const textSpan = document.createElement('span');
+                textSpan.setAttribute('data-i18n', 'prevStep');
+                textSpan.textContent = t.prevStep;
+                b.appendChild(textSpan);
+            });
+
+            this.updateProgressBar();
+            if (this.getCurrentSection() === 6) this.generateApplicationSummary();
+            this.saveProgress();
+        };
+
+        applyTranslations();
+
         if (btn && text) {
             btn.addEventListener('click', () => {
                 this.state.language = this.state.language === 'en' ? 'es' : 'en';
-                const t = translations[this.state.language];
-                text.textContent = t.langText;
-                
-                document.querySelectorAll('[data-i18n]').forEach(el => {
-                    const key = el.getAttribute('data-i18n');
-                    if (t[key]) {
-                        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-                            if (el.placeholder !== undefined) el.placeholder = t[key];
-                        } else if (el.tagName === 'OPTION') {
-                            el.textContent = t[key];
-                        } else {
-                            el.textContent = t[key];
-                        }
-                    }
-                });
-
-                document.querySelectorAll('.btn-next').forEach(b => {
-                    const icon = b.querySelector('i');
-                    const textSpan = document.createElement('span');
-                    textSpan.setAttribute('data-i18n', 'nextStep');
-                    textSpan.textContent = t.nextStep;
-                    b.innerHTML = '';
-                    b.appendChild(textSpan);
-                    if (icon) b.appendChild(icon);
-                });
-                document.querySelectorAll('.btn-prev').forEach(b => {
-                    const icon = b.querySelector('i');
-                    const textSpan = document.createElement('span');
-                    textSpan.setAttribute('data-i18n', 'prevStep');
-                    textSpan.textContent = t.prevStep;
-                    b.innerHTML = '';
-                    if (icon) b.appendChild(icon);
-                    b.appendChild(textSpan);
-                });
-
-                this.updateProgressBar();
-
-                if (this.getCurrentSection() === 6) {
-                    this.generateApplicationSummary();
-                }
-
-                this.saveProgress();
-
-                // Set document language for assistive tech
-                document.documentElement.lang = this.state.language;
+                localStorage.setItem('choicePropertiesLanguage', this.state.language);
+                applyTranslations();
             });
+        }
+    }
+
+    setupPropertyData() {
+        if (window.propertyData && Object.keys(window.propertyData).length > 0) {
+            // Pre-fill property-specific fields
+            const addressField = document.getElementById('propertyAddress');
+            if (addressField && window.propertyData.Address) {
+                addressField.value = `${window.propertyData.Address}, ${window.propertyData.City}, ${window.propertyData.State} ${window.propertyData.Zip}`;
+            }
+
+            // Update title if embed
+            if (window.isEmbed) {
+                document.title = `Apply for ${window.propertyData.Address || 'Property'}`;
+            }
+
+            // Store property ID for submission
+            this.propertyId = window.propertyData.PropertyID;
         }
     }
 
@@ -1450,6 +1502,11 @@ class RentalApplication {
 
             const form = document.getElementById('rentalApplication');
             const formData = new FormData(form);
+
+            // Add property ID if available
+            if (this.propertyId) {
+                formData.set('PropertyID', this.propertyId);
+            }
 
             // ────────────────────────────────────────────────────────
             // SECURITY: Add CSRF Token & Session ID

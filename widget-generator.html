@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Choice Properties - Widget Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .code-output { background: #f8f9fa; padding: 15px; border-radius: 4px; margin-top: 20px; }
+        pre { white-space: pre-wrap; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <h1>Choice Properties - Embeddable Widget Generator</h1>
+    <p>Generate embed codes for landlords to add rental applications to their websites.</p>
+
+    <form id="widgetForm">
+        <div class="form-group">
+            <label for="propertyId">Property ID:</label>
+            <input type="text" id="propertyId" placeholder="e.g., PROP001" required>
+        </div>
+
+        <div class="form-group">
+            <label for="state">State:</label>
+            <select id="state" required>
+                <option value="">Select State</option>
+                <option value="CA">California</option>
+                <option value="TX">Texas</option>
+                <option value="FL">Florida</option>
+                <option value="NY">New York</option>
+                <!-- Add more states as needed -->
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="address">Property Address:</label>
+            <input type="text" id="address" placeholder="123 Main St" required>
+        </div>
+
+        <div class="form-group">
+            <label for="city">City:</label>
+            <input type="text" id="city" required>
+        </div>
+
+        <div class="form-group">
+            <label for="zip">ZIP Code:</label>
+            <input type="text" id="zip" required>
+        </div>
+
+        <div class="form-group">
+            <label for="rent">Monthly Rent ($):</label>
+            <input type="number" id="rent" required>
+        </div>
+
+        <div class="form-group">
+            <label for="deposit">Security Deposit ($):</label>
+            <input type="number" id="deposit" required>
+        </div>
+
+        <div class="form-group">
+            <label for="applicationFee">Application Fee ($):</label>
+            <input type="number" id="applicationFee" value="25" required>
+        </div>
+
+        <button type="submit">Generate Embed Codes</button>
+    </form>
+
+    <div id="output" class="code-output" style="display: none;">
+        <h3>Embed Codes Generated</h3>
+        <h4>Iframe Code:</h4>
+        <pre id="iframeCode"></pre>
+
+        <h4>Script Widget Code:</h4>
+        <pre id="scriptCode"></pre>
+
+        <h4>Instructions:</h4>
+        <p>Copy and paste the iframe code into your website's HTML where you want the application form to appear.</p>
+        <p>The script widget is more flexible but requires CORS setup on your server.</p>
+    </div>
+
+    <script>
+        const backendUrl = 'https://script.google.com/macros/s/AKfycbxRo3T68MfK1pT7SiIsbSgVQTtWJB2wSzQA8G9NTcpZqkYSI7SKl7HpHjL5e-wc98AK/exec';
+
+        document.getElementById('widgetForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const propertyId = document.getElementById('propertyId').value;
+            const state = document.getElementById('state').value;
+            const address = document.getElementById('address').value;
+            const city = document.getElementById('city').value;
+            const zip = document.getElementById('zip').value;
+            const rent = document.getElementById('rent').value;
+            const deposit = document.getElementById('deposit').value;
+            const applicationFee = document.getElementById('applicationFee').value;
+
+            const embedUrl = `${backendUrl}?path=embed&propertyId=${encodeURIComponent(propertyId)}`;
+
+            const iframeCode = `<iframe src="${embedUrl}" width="100%" height="800" frameborder="0" style="border: 1px solid #ccc; border-radius: 8px;"></iframe>`;
+
+            const scriptCode = `<div id="rental-app-widget"></div>
+<script>
+window.RentalAppConfig = {
+  propertyId: '${propertyId}',
+  state: '${state}',
+  address: '${address}',
+  city: '${city}',
+  zip: '${zip}',
+  rent: ${rent},
+  deposit: ${deposit},
+  applicationFee: ${applicationFee}
+};
+(function() {
+  const script = document.createElement('script');
+  script.src = '${backendUrl.replace('exec', 'widget.js')}';
+  document.head.appendChild(script);
+})();
+</script>`;
+
+            document.getElementById('iframeCode').textContent = iframeCode;
+            document.getElementById('scriptCode').textContent = scriptCode;
+            document.getElementById('output').style.display = 'block';
+        });
+    </script>
+</body>
+</html>

@@ -42,6 +42,12 @@
 </head>
 <body>
 
+<script>
+  // Property data for embeddable widget
+  window.propertyData = <?!= JSON.stringify(propertyData || {}) ?>;
+  window.isEmbed = <?!= isEmbed ? false : true ?>;
+</script>
+
 <a href="#rentalApplication" class="skip-link" id="skipToForm">Skip to application form</a>
 <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true"></div>
 
@@ -225,6 +231,7 @@
 
         <form id="rentalApplication" enctype="multipart/form-data">
             <input type="hidden" name="Application ID" id="formApplicationId">
+            <input type="hidden" name="Preferred Language" id="preferredLanguage" value="en">
 
             <!-- ===== STEP 1: Property & Applicant Details ===== -->
             <div class="form-section active" id="section1">
