@@ -4742,7 +4742,7 @@ function renderAdminPanel() {
 
     // Show properties panel
     const container = document.getElementById('applicationsContainer');
-    container.innerHTML = `
+    container.innerHTML = \`
       <div class="properties-panel">
         <div class="panel-header">
           <h2>🏠 Property Management</h2>
@@ -4752,7 +4752,7 @@ function renderAdminPanel() {
           <div class="loading">Loading properties...</div>
         </div>
       </div>
-    `;
+    \`;
 
     // Load properties
     loadProperties();
@@ -4767,24 +4767,24 @@ function renderAdminPanel() {
           return;
         }
 
-        grid.innerHTML = properties.map(prop => `
-          <div class="property-card">
-            <div class="property-header">
-              <h3>${prop.Address || 'No Address'}</h3>
-              <span class="property-id">${prop.PropertyID}</span>
-            </div>
-            <div class="property-details">
-              <div class="detail-item">📍 ${prop.City || 'N/A'}, ${prop.State || 'N/A'}</div>
-              <div class="detail-item">💰 $${prop.Rent || 0}/month</div>
-              <div class="detail-item">🔒 $${prop.Deposit || 0} deposit</div>
-              <div class="detail-item">📄 ${prop.ApplicationFee || 0} app fee</div>
-            </div>
-            <div class="property-actions">
-              <button class="btn-secondary" onclick="editProperty('${prop.PropertyID}')">Edit</button>
-              <button class="btn-danger" onclick="deleteProperty('${prop.PropertyID}')">Delete</button>
-            </div>
-          </div>
-        `).join('');
+        grid.innerHTML = properties.map(function(prop) {
+          return '<div class="property-card">' +
+            '<div class="property-header">' +
+              '<h3>' + (prop.Address || 'No Address') + '</h3>' +
+              '<span class="property-id">' + prop.PropertyID + '</span>' +
+            '</div>' +
+            '<div class="property-details">' +
+              '<div class="detail-item">📍 ' + (prop.City || 'N/A') + ', ' + (prop.State || 'N/A') + '</div>' +
+              '<div class="detail-item">💰 $' + (prop.Rent || 0) + '/month</div>' +
+              '<div class="detail-item">🔒 $' + (prop.Deposit || 0) + ' deposit</div>' +
+              '<div class="detail-item">📄 ' + (prop.ApplicationFee || 0) + ' app fee</div>' +
+            '</div>' +
+            '<div class="property-actions">' +
+              '<button class="btn-secondary" onclick="editProperty(\'' + prop.PropertyID + '\')">Edit</button>' +
+              '<button class="btn-danger" onclick="deleteProperty(\'' + prop.PropertyID + '\')">Delete</button>' +
+            '</div>' +
+          '</div>';
+        }).join('');
       })
       .getAllProperties();
   }
@@ -4793,7 +4793,7 @@ function renderAdminPanel() {
     // Simple modal for adding properties
     const modal = document.createElement('div');
     modal.className = 'modal-overlay open';
-    modal.innerHTML = `
+    modal.innerHTML = \`
       <div class="modal-box">
         <div class="modal-header">
           <h3>Add New Property</h3>
@@ -4857,7 +4857,7 @@ function renderAdminPanel() {
           <button class="btn-primary" onclick="saveProperty()">Save Property</button>
         </div>
       </div>
-    `;
+    \`;
     document.body.appendChild(modal);
   }
 
