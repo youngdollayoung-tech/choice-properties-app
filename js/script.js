@@ -1537,25 +1537,37 @@ class RentalApplication {
             this.updateSubmissionProgress(1, t.processing);
 
             const form = document.getElementById('rentalApplication');
-            const formData = new FormData(form);
+            const rawFormData = new FormData(form);
+
+            // Convert to URLSearchParams to avoid CORS preflight (no multipart)
+            const params = new URLSearchParams();
+            rawFormData.forEach((value, key) => {
+                if (typeof value === 'string') {
+                    params.append(key, value);
+                }
+            });
 
             // Add property ID if available
             if (this.propertyId) {
-                formData.set('PropertyID', this.propertyId);
+                params.set('PropertyID', this.propertyId);
             }
 
             // ────────────────────────────────────────────────────────
             // SECURITY: Add CSRF Token & Session ID
             // ────────────────────────────────────────────────────────
-            SecurityManager.addSecurityHeaders(formData);
-            formData.set('DataProcessingConsent', 'yes');
+            const securityData = new FormData();
+            SecurityManager.addSecurityHeaders(securityData);
+            securityData.forEach((value, key) => {
+                if (typeof value === 'string') params.set(key, value);
+            });
+            params.set('DataProcessingConsent', 'yes');
 
             this.updateSubmissionProgress(2, t.validating);
             const response = await fetch(this.BACKEND_URL, {
                 method: 'POST',
-                body: formData,
+                body: params,
                 headers: {
-                    // Let browser set Content-Type with boundary for FormData
+                    'Content-Type': 'application/x-www-form-urlencoded'
                 }
             });
 
