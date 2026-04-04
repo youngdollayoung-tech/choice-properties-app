@@ -46,7 +46,7 @@ class RentalApplication {
         this.retryCount = 0;
         this.retryTimeout = null;
         
-        this.BACKEND_URL = 'https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec'; // Replace YOUR_SCRIPT_ID with actual GAS deployment ID
+        this.BACKEND_URL = 'https://script.google.com/macros/s/AKfycbzuOv7yFY1fzMC7E1vRCLjVaWOiqOXwDFES6qgEZMTEy-MFGfD8fsMa3al_jb9DdwFd/exec';
         
         this.initialize();
     }
