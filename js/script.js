@@ -1348,10 +1348,29 @@ class RentalApplication {
         }
         retryBtn.style.display = 'inline-block';
 
+        let dismissBtn = document.getElementById('submissionDismissBtn');
+        if (!dismissBtn) {
+            dismissBtn = document.createElement('button');
+            dismissBtn.id = 'submissionDismissBtn';
+            dismissBtn.className = 'btn btn-dismiss';
+            dismissBtn.innerHTML = `<i class="fas fa-arrow-left"></i> Go Back`;
+            dismissBtn.style.marginTop = '15px';
+            dismissBtn.style.marginLeft = '10px';
+            dismissBtn.style.padding = '10px 20px';
+            dismissBtn.style.background = '#6c757d';
+            dismissBtn.style.color = 'white';
+            dismissBtn.style.border = 'none';
+            dismissBtn.style.borderRadius = 'var(--border-radius)';
+            dismissBtn.style.cursor = 'pointer';
+            progressDiv.appendChild(dismissBtn);
+        }
+        dismissBtn.style.display = 'inline-block';
+
         const newBtn = retryBtn.cloneNode(true);
         retryBtn.parentNode.replaceChild(newBtn, retryBtn);
         newBtn.addEventListener('click', () => {
             newBtn.style.display = 'none';
+            dismissBtn.style.display = 'none';
             statusArea.classList.remove('error');
             if (spinner) {
                 spinner.className = 'fas fa-spinner fa-pulse';
@@ -1364,6 +1383,23 @@ class RentalApplication {
             this.retryCount = 0;
             this.updateSubmissionProgress(1, t.processing);
             this.handleFormSubmit(new Event('submit'));
+        });
+
+        const newDismissBtn = dismissBtn.cloneNode(true);
+        dismissBtn.parentNode.replaceChild(newDismissBtn, dismissBtn);
+        newDismissBtn.addEventListener('click', () => {
+            statusArea.classList.remove('error');
+            if (spinner) {
+                spinner.className = 'fas fa-spinner fa-pulse';
+                spinner.style.color = '';
+            }
+            if (currentStep) {
+                const stepItem = document.getElementById(`stepItem${currentStep}`);
+                if (stepItem) stepItem.classList.remove('error');
+            }
+            this.retryCount = 0;
+            this.setState({ isSubmitting: false });
+            this.hideSubmissionProgress();
         });
     }
 
