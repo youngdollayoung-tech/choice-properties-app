@@ -4,15 +4,10 @@
 
 // Environment settings
 const PRODUCTION_MODE = true; // Set to false for development
-const ALLOWED_ORIGINS = [
-  'https://choice-properties-app.pages.dev',
-  'https://script.google.com'
-];
-
 // CORS headers for production
 function getCorsHeaders() {
   return {
-    'Access-Control-Allow-Origin': ALLOWED_ORIGINS.join(','),
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-CSRF-Token',
     'Access-Control-Max-Age': '3600'
@@ -327,7 +322,8 @@ function doPost(e) {
       logSecurityEvent('rate_limit_exceeded', 'unknown', null, `IP: ${ipAddress}`, ipAddress);
       return ContentService
         .createTextOutput(JSON.stringify(buildErrorResponse(429, rateLimitCheck.message)))
-        .setMimeType(ContentService.MimeType.JSON);
+        .setMimeType(ContentService.MimeType.JSON)
+        .setHeaders(getCorsHeaders());
     }
 
     if (e.postData && e.postData.type && e.postData.type.indexOf('multipart/form-data') === 0) {
@@ -373,7 +369,8 @@ function doPost(e) {
         logSecurityEvent('csrf_missing', formData['Email'] || 'unknown', null, 'Missing CSRF token', ipAddress);
         return ContentService
           .createTextOutput(JSON.stringify(buildErrorResponse(403, 'Security token missing')))
-          .setMimeType(ContentService.MimeType.JSON);
+          .setMimeType(ContentService.MimeType.JSON)
+          .setHeaders(getCorsHeaders());
       }
       
       const csrfValidation = validateCSRFToken(sessionId, csrfToken);
