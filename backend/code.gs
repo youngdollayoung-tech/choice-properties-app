@@ -5,9 +5,8 @@
 // Environment settings
 const PRODUCTION_MODE = true; // Set to false for development
 const ALLOWED_ORIGINS = [
-  'https://your-cloudflare-pages-url.pages.dev', // Replace with actual URL
-  'https://choice-properties-app.yourdomain.com', // Replace with actual domain
-  'https://script.google.com' // For GAS execution
+  'https://choice-properties-app.pages.dev',
+  'https://script.google.com'
 ];
 
 // CORS headers for production
